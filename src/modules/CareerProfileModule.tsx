@@ -33,7 +33,7 @@ const PROFILE_SECTIONS: Array<{ id: ProfileSectionId; label: string; icon: typeo
 ];
 
 export function CareerProfileModule() {
-  const { profile, updateProfile, createResume, setActiveModule } = useCareer();
+  const { profile, updateProfile, createResume, setActiveModule, user, syncStatus } = useCareer();
   const [activeSection, setActiveSection] = useState<ProfileSectionId>('personal');
 
   const sectionCount = (id: ProfileSectionId): string => {
@@ -76,9 +76,23 @@ export function CareerProfileModule() {
           <p className="text-xs text-slate-500 leading-relaxed">
             Your verified professional record. Resume Builder and Cover Letter Maker import from here without altering your master data.
           </p>
-          <div className="pt-2 flex items-center gap-1.5 text-[11px] text-emerald-700 font-medium">
+          <div
+            className={`pt-2 flex items-center gap-1.5 text-[11px] font-medium ${
+              user && syncStatus === 'error'
+                ? 'text-rose-700'
+                : user && syncStatus === 'syncing'
+                  ? 'text-slate-600'
+                  : 'text-emerald-700'
+            }`}
+          >
             <CheckCircle2 className="w-3.5 h-3.5" />
-            Autosaved locally
+            {user
+              ? syncStatus === 'syncing'
+                ? 'Syncing to Firestore...'
+                : syncStatus === 'error'
+                  ? 'Sync error (saved locally)'
+                  : 'Synced to Firestore'
+              : 'Autosaved locally'}
           </div>
         </div>
 

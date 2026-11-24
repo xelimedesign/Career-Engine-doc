@@ -32,6 +32,20 @@ import {
   ReviewScope,
   ReviewScoringConfig,
 } from '../types/career';
+import { getAiProviderConfig } from './aiProviderConfig';
+import {
+  ollamaAdaptCompanionQuestions,
+  ollamaAnalyzeCompanionField,
+  ollamaAnalyzeJob,
+  ollamaAssistResume,
+  ollamaEditCoverLetter,
+  ollamaGenerateCompanionSuggestion,
+  ollamaGenerateCoverLetter,
+  ollamaRegenerateReviewSuggestion,
+  ollamaResearchCompany,
+  ollamaRunApplicationReview,
+  ollamaRunThreeWayJobMatch,
+} from './ollamaInference';
 
 const DEFAULT_AI_REQUEST_TIMEOUT_MS = 90000;
 
@@ -119,16 +133,17 @@ function sanitizeCompanyReport(
   return {
     ...report,
     companyOverview: sanitizeReportField(report.companyOverview, dismissedTexts),
-    servicesAndProducts: report.servicesAndProducts.filter(
-      (item) => !dismissedTexts.some((d) => item.toLowerCase().includes(d) || d.includes(item.toLowerCase()))
-    ),
-    targetAudienceAndMarket: sanitizeReportField(report.targetAudienceAndMarket, dismissedTexts),
+    servicesAndSpecialties: sanitizeReportField(report.servicesAndSpecialties, dismissedTexts),
+    industry: sanitizeReportField(report.industry, dismissedTexts),
+    projectsAndPortfolio: sanitizeReportField(report.projectsAndPortfolio, dismissedTexts),
+    technology: sanitizeReportField(report.technology, dismissedTexts),
     missionAndValues: sanitizeReportField(report.missionAndValues, dismissedTexts),
-    notableProjectsOrInitiatives: sanitizeReportField(report.notableProjectsOrInitiatives, dismissedTexts),
-    technicalOrOperationalSignals: report.technicalOrOperationalSignals.filter(
+    recentDevelopments: sanitizeReportField(report.recentDevelopments, dismissedTexts),
+    employeeExpectations: sanitizeReportField(report.employeeExpectations, dismissedTexts),
+    relevantCompanyInformation: sanitizeReportField(report.relevantCompanyInformation, dismissedTexts),
+    applicationRecommendations: report.applicationRecommendations.filter(
       (item) => !dismissedTexts.some((d) => item.toLowerCase().includes(d) || d.includes(item.toLowerCase()))
     ),
-    roleAlignmentInsights: sanitizeReportField(report.roleAlignmentInsights, dismissedTexts),
   };
 }
 
@@ -141,7 +156,7 @@ export function buildApprovedCompanyIntelligencePayload(research?: CompanyResear
     (f) => f.verificationStatus === 'approved'
   );
   const unreviewedCount = research.findings.filter(
-    (f) => f.verificationStatus === 'unreviewed' || f.verificationStatus === 'needs_verification'
+    (f) => f.verificationStatus === 'pending' || f.verificationStatus === 'needs_verification'
   ).length;
   return {
     companyName: research.companyName,
@@ -179,6 +194,9 @@ export async function researchCompanyWithAi(params: {
   jobLocation?: string;
   forceRefresh?: boolean;
 }): Promise<CompanyResearchApiResponse> {
+  if (getAiProviderConfig().provider === 'ollama') {
+    return ollamaResearchCompany(params);
+  }
   return postJson<CompanyResearchApiResponse>('/api/research/company', params);
 }
 
@@ -187,9 +205,17 @@ export async function runThreeWayJobMatchWithAi(params: {
   companyResearch?: CompanyResearch;
   careerProfile: CareerProfile;
 }): Promise<Omit<JobMatch, 'id' | 'jobId' | 'userProfileId' | 'matchedAt'>> {
+  const companyIntelligence = buildApprovedCompanyIntelligencePayload(params.companyResearch);
+  if (getAiProviderConfig().provider === 'ollama') {
+    return ollamaRunThreeWayJobMatch({
+      job: params.job,
+      companyIntelligence,
+      careerProfile: params.careerProfile,
+    });
+  }
   return postJson('/api/research/job-match', {
     job: params.job,
-    companyResearch: buildApprovedCompanyIntelligencePayload(params.companyResearch),
+    companyResearch: companyIntelligence,
     careerProfile: params.careerProfile,
   });
 }
@@ -200,6 +226,9 @@ export async function analyzeJobWithAi(params: {
   jobDescription: string;
   profile: CareerProfile;
 }): Promise<JobAnalyzeResult> {
+  if (getAiProviderConfig().provider === 'ollama') {
+    return ollamaAnalyzeJob(params);
+  }
   const res = await postJson<Omit<JobAnalyzeResult, 'analyzedAt'>>('/api/ai/job-analyze', params);
   return {
     ...res,
@@ -215,12 +244,23 @@ export async function assistResumeWithAi(params: {
   companyResearch?: CompanyResearch;
   jobMatch?: JobMatch;
 }): Promise<ResumeAssistResponse> {
+  const companyIntelligence = buildApprovedCompanyIntelligencePayload(params.companyResearch);
+  if (getAiProviderConfig().provider === 'ollama') {
+    return ollamaAssistResume({
+      action: params.action,
+      resume: params.resume,
+      targetJob: params.targetJob,
+      experienceId: params.experienceId,
+      companyIntelligence,
+      jobMatch: params.jobMatch,
+    });
+  }
   return postJson<ResumeAssistResponse>('/api/ai/resume-assist', {
     action: params.action,
     resume: params.resume,
     targetJob: params.targetJob,
     experienceId: params.experienceId,
-    companyIntelligence: buildApprovedCompanyIntelligencePayload(params.companyResearch),
+    companyIntelligence,
     jobMatch: params.jobMatch,
   });
 }
@@ -236,9 +276,16 @@ export async function generateCoverLetterWithAi(params: {
   companyResearch?: CompanyResearch;
   jobMatch?: JobMatch;
 }): Promise<CoverLetterGenerateResponse> {
+  const companyIntelligence = buildApprovedCompanyIntelligencePayload(params.companyResearch);
+  if (getAiProviderConfig().provider === 'ollama') {
+    return ollamaGenerateCoverLetter({
+      ...params,
+      companyIntelligence,
+    });
+  }
   return postJson<CoverLetterGenerateResponse>('/api/ai/cover-letter-generate', {
     ...params,
-    companyIntelligence: buildApprovedCompanyIntelligencePayload(params.companyResearch),
+    companyIntelligence,
   });
 }
 
@@ -255,6 +302,22 @@ export async function editCoverLetterWithAi(params: {
   companyResearch?: CompanyResearch;
   jobMatch?: JobMatch;
 }): Promise<CoverLetterEditResponse> {
+  const companyIntelligence = buildApprovedCompanyIntelligencePayload(params.companyResearch);
+  if (getAiProviderConfig().provider === 'ollama') {
+    return ollamaEditCoverLetter({
+      action: params.action,
+      paragraphId: params.paragraphId,
+      currentParagraphText: params.currentParagraphText,
+      allParagraphs: params.allParagraphs,
+      writingStyle: params.writingStyle,
+      employer: params.employer,
+      jobInfo: params.jobInfo,
+      careerProfile: params.careerProfile,
+      selectedResume: params.selectedResume,
+      companyIntelligence,
+      jobMatch: params.jobMatch,
+    });
+  }
   return postJson<CoverLetterEditResponse>('/api/ai/cover-letter-edit', {
     action: params.action,
     paragraphId: params.paragraphId,
@@ -265,7 +328,7 @@ export async function editCoverLetterWithAi(params: {
     jobInfo: params.jobInfo,
     careerProfile: params.careerProfile,
     selectedResume: params.selectedResume,
-    companyIntelligence: buildApprovedCompanyIntelligencePayload(params.companyResearch),
+    companyIntelligence,
     jobMatch: params.jobMatch,
   });
 }
@@ -285,9 +348,16 @@ export async function runApplicationReviewWithAi(params: {
   }>;
   scoringConfig?: ReviewScoringConfig;
 }): Promise<ApplicationReviewRecord> {
+  const sanitizedResearch = sanitizeCompanyResearchForReview(params.companyResearch);
+  if (getAiProviderConfig().provider === 'ollama') {
+    return ollamaRunApplicationReview({
+      ...params,
+      companyResearch: sanitizedResearch,
+    });
+  }
   return postJson<ApplicationReviewRecord>('/api/review/analyze', {
     ...params,
-    companyResearch: sanitizeCompanyResearchForReview(params.companyResearch),
+    companyResearch: sanitizedResearch,
   });
 }
 
@@ -297,6 +367,9 @@ export async function regenerateReviewSuggestionWithAi(params: {
   targetJob?: JobApplication;
   userGuidance?: string;
 }): Promise<{ recommendedCorrection: string; explanation: string }> {
+  if (getAiProviderConfig().provider === 'ollama') {
+    return ollamaRegenerateReviewSuggestion(params);
+  }
   return postJson('/api/review/regenerate-suggestion', params);
 }
 
@@ -310,6 +383,19 @@ export async function analyzeCompanionFieldWithAi(params: {
   jobContext?: JobApplication;
   companyResearch?: CompanyResearch;
 }): Promise<AIWritingAnalyzeResponse> {
+  const companyResearch = buildApprovedCompanyIntelligencePayload(params.companyResearch);
+  if (getAiProviderConfig().provider === 'ollama') {
+    return ollamaAnalyzeCompanionField({
+      fieldType: params.fieldType,
+      currentValue: params.currentValue,
+      fieldLabel: params.fieldLabel,
+      documentType: params.documentType,
+      careerProfile: params.careerProfile,
+      documentContext: params.documentContext,
+      jobContext: params.jobContext,
+      companyResearch,
+    });
+  }
   return postJson<AIWritingAnalyzeResponse>('/api/ai/companion/analyze', {
     fieldType: params.fieldType,
     currentValue: params.currentValue,
@@ -318,7 +404,7 @@ export async function analyzeCompanionFieldWithAi(params: {
     careerProfile: params.careerProfile,
     documentContext: params.documentContext,
     jobContext: params.jobContext,
-    companyResearch: buildApprovedCompanyIntelligencePayload(params.companyResearch),
+    companyResearch,
   });
 }
 
@@ -334,6 +420,21 @@ export async function adaptCompanionQuestionsWithAi(params: {
   answeredQuestions: AIWritingQuestionAnswer[];
   remainingQuestions: AIWritingQuestion[];
 }): Promise<{ questions: AIWritingQuestion[]; adaptationNote?: string }> {
+  const companyResearch = buildApprovedCompanyIntelligencePayload(params.companyResearch);
+  if (getAiProviderConfig().provider === 'ollama') {
+    return ollamaAdaptCompanionQuestions({
+      fieldType: params.fieldType,
+      currentValue: params.currentValue,
+      fieldLabel: params.fieldLabel,
+      documentType: params.documentType,
+      careerProfile: params.careerProfile,
+      documentContext: params.documentContext,
+      jobContext: params.jobContext,
+      companyResearch,
+      answeredQuestions: params.answeredQuestions,
+      remainingQuestions: params.remainingQuestions,
+    });
+  }
   return postJson<{ questions: AIWritingQuestion[]; adaptationNote?: string }>(
     '/api/ai/companion/adapt',
     {
@@ -344,7 +445,7 @@ export async function adaptCompanionQuestionsWithAi(params: {
       careerProfile: params.careerProfile,
       documentContext: params.documentContext,
       jobContext: params.jobContext,
-      companyResearch: buildApprovedCompanyIntelligencePayload(params.companyResearch),
+      companyResearch,
       answeredQuestions: params.answeredQuestions,
       remainingQuestions: params.remainingQuestions,
     }
@@ -363,6 +464,21 @@ export async function generateCompanionSuggestionWithAi(params: {
   qaPairs: AIWritingQuestionAnswer[];
   regenerationInstruction?: string;
 }): Promise<AIWritingGenerateResponse> {
+  const companyResearch = buildApprovedCompanyIntelligencePayload(params.companyResearch);
+  if (getAiProviderConfig().provider === 'ollama') {
+    return ollamaGenerateCompanionSuggestion({
+      fieldType: params.fieldType,
+      currentValue: params.currentValue,
+      fieldLabel: params.fieldLabel,
+      documentType: params.documentType,
+      careerProfile: params.careerProfile,
+      documentContext: params.documentContext,
+      jobContext: params.jobContext,
+      companyResearch,
+      qaPairs: params.qaPairs,
+      regenerationInstruction: params.regenerationInstruction,
+    });
+  }
   return postJson<AIWritingGenerateResponse>('/api/ai/companion/generate', {
     fieldType: params.fieldType,
     currentValue: params.currentValue,
@@ -371,7 +487,7 @@ export async function generateCompanionSuggestionWithAi(params: {
     careerProfile: params.careerProfile,
     documentContext: params.documentContext,
     jobContext: params.jobContext,
-    companyResearch: buildApprovedCompanyIntelligencePayload(params.companyResearch),
+    companyResearch,
     qaPairs: params.qaPairs,
     regenerationInstruction: params.regenerationInstruction,
   });

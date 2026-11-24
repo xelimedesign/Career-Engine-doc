@@ -20,7 +20,7 @@ import {
   triggerBlobDownload,
 } from './exportHelpers';
 
-export async function exportCoverLetterToDocx(letter: CoverLetterDocument): Promise<void> {
+export async function buildCoverLetterDocxBlob(letter: CoverLetterDocument): Promise<Blob> {
   const { applicant, employer, content, formatting, template } = letter;
   const font = mapDocxFont(formatting.fontFamily);
   const bodySizeHalfPt = Math.round(formatting.fontSize * 2);
@@ -298,11 +298,15 @@ export async function exportCoverLetterToDocx(letter: CoverLetterDocument): Prom
     ],
   });
 
-  const blob = await Packer.toBlob(doc);
+  return Packer.toBlob(doc);
+}
+
+export async function exportCoverLetterToDocx(letter: CoverLetterDocument): Promise<void> {
+  const blob = await buildCoverLetterDocxBlob(letter);
   triggerBlobDownload(blob, `${sanitizeFilename(letter.title, 'Cover_Letter')}.docx`);
 }
 
-export function exportCoverLetterToPdf(letter: CoverLetterDocument): void {
+function buildCoverLetterPdfDocument(letter: CoverLetterDocument): jsPDF {
   const { applicant, employer, content, formatting } = letter;
   const doc = new jsPDF({ unit: 'pt', format: 'letter' });
   const pageWidth = 612;
@@ -435,5 +439,13 @@ export function exportCoverLetterToPdf(letter: CoverLetterDocument): void {
   doc.setTextColor(ar, ag, ab);
   doc.text(content.signatureName || applicant.fullName || '', margin, y);
 
-  doc.save(`${sanitizeFilename(letter.title, 'Cover_Letter')}.pdf`);
+  return doc;
+}
+
+export function buildCoverLetterPdfBlob(letter: CoverLetterDocument): Blob {
+  return buildCoverLetterPdfDocument(letter).output('blob');
+}
+
+export function exportCoverLetterToPdf(letter: CoverLetterDocument): void {
+  buildCoverLetterPdfDocument(letter).save(`${sanitizeFilename(letter.title, 'Cover_Letter')}.pdf`);
 }

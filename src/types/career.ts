@@ -50,6 +50,14 @@ export interface SkillsGroup {
   industry: string[];
 }
 
+export type SkillCategoryKey = keyof SkillsGroup;
+
+export interface SkillEntry {
+  id: string;
+  category: SkillCategoryKey;
+  name: string;
+}
+
 export interface ProjectItem {
   id: string;
   name: string;
@@ -108,6 +116,7 @@ export interface CareerProfile {
   workExperience: WorkExperienceItem[];
   education: EducationItem[];
   skills: SkillsGroup;
+  skillEntries?: SkillEntry[];
   projects: ProjectItem[];
   certifications: CertificationItem[];
   awards: AwardItem[];
@@ -171,6 +180,12 @@ export interface ResumeDocument {
   sections: ResumeSectionConfig[];
   template: ResumeTemplateId;
   formatting: ResumeFormatting;
+  driveFileId?: string;
+  driveWebViewLink?: string;
+  driveExportedAt?: string;
+  driveFolderName?: string;
+  driveSyncStatus?: DriveSyncStatus;
+  driveSyncError?: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -185,11 +200,43 @@ export interface JobAnalysis {
   analyzedAt: string;
 }
 
+export type JobIntakeStatus =
+  | 'needs_extraction'
+  | 'ready_for_tailoring'
+  | 'needs_manual_input'
+  | 'tailoring'
+  | 'tailored'
+  | 'failed';
+
+export type JobTaskType = 'resume' | 'cover_letter' | 'both';
+
+export type JobTaskStatus = 'idle' | 'queued' | 'running' | 'done' | 'failed';
+
+export type StickyNoteThemeId = 'purple' | 'yellow' | 'green' | 'blue' | 'pink' | 'graphite';
+
+export interface StickyNoteItem {
+  id: string;
+  theme: StickyNoteThemeId;
+  category: string;
+  date: string;
+  bannerType: string;
+  customImage?: string | null;
+  title: string;
+  body: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface JobApplication {
   id: string;
   companyId?: string;
   company: string;
   companyWebsite?: string;
+  sourceUrl?: string;
+  jobStatus?: JobIntakeStatus;
+  selectedTask?: JobTaskType | null;
+  taskStatus?: JobTaskStatus;
+  taskReason?: string;
   jobTitle: string;
   jobLocation?: string;
   department: string;
@@ -204,6 +251,12 @@ export interface JobApplication {
   technicalRequirements: string[];
   applicationNotes?: string;
   analysis?: JobAnalysis;
+  noteCategory?: string;
+  noteTheme?: StickyNoteThemeId;
+  noteDate?: string;
+  noteBannerType?: string;
+  noteCustomImage?: string | null;
+  isNoteOnly?: boolean;
   createdAt: string;
   updatedAt: string;
 }
@@ -299,6 +352,12 @@ export interface CoverLetterDocument {
   length: CoverLetterLength;
   template: CoverLetterTemplateId;
   formatting: CoverLetterFormatting;
+  driveFileId?: string;
+  driveWebViewLink?: string;
+  driveExportedAt?: string;
+  driveFolderName?: string;
+  driveSyncStatus?: DriveSyncStatus;
+  driveSyncError?: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -452,6 +511,30 @@ export interface CompanyResearch {
   findings: ResearchFinding[];
   sources: ResearchSource[];
   report: CompanyIntelligenceReport;
+  driveFileId?: string;
+  driveWebViewLink?: string;
+  driveExportedAt?: string;
+  driveFolderName?: string;
+  driveSyncStatus?: DriveSyncStatus;
+  driveSyncError?: string;
+}
+
+export type DriveExportFormat = 'pdf' | 'docx' | 'google_doc';
+export type DriveSyncStatus = 'synced' | 'pending_auth' | 'error';
+
+export interface DriveExportSettings {
+  autoExportEnabled: boolean;
+  format: DriveExportFormat;
+  organizeByJobFolder: boolean;
+  folderId?: string;
+  folderWebViewLink?: string;
+}
+
+export interface PendingDriveExport {
+  kind: 'resume' | 'cover-letter' | 'research';
+  id: string;
+  title: string;
+  queuedAt: string;
 }
 
 export interface JobMatch {

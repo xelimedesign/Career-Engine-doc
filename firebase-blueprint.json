@@ -1,0 +1,213 @@
+{
+  "entities": {
+    "CareerProfile": {
+      "title": "CareerProfile",
+      "description": "Master career profile with stable IDs on experience, education, project, and skill entries.",
+      "type": "object",
+      "properties": {
+        "personal": { "type": "object" },
+        "summary": { "type": "object" },
+        "workExperience": { "type": "array" },
+        "education": { "type": "array" },
+        "skills": { "type": "object" },
+        "skillEntries": { "type": "array" },
+        "projects": { "type": "array" },
+        "certifications": { "type": "array" },
+        "awards": { "type": "array" },
+        "volunteer": { "type": "array" },
+        "languages": { "type": "array" },
+        "publications": { "type": "array" },
+        "updatedAt": { "type": "string", "format": "date-time", "maxLength": 64 }
+      },
+      "required": ["personal", "summary", "workExperience", "education", "skills", "projects", "updatedAt"]
+    },
+    "JobApplication": {
+      "title": "JobApplication",
+      "description": "Tracked job application or job intake record under users/{uid}/jobs/{jobId}.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "companyId": { "type": "string", "maxLength": 128 },
+        "company": { "type": "string", "maxLength": 200 },
+        "companyWebsite": { "type": "string", "maxLength": 2048 },
+        "jobTitle": { "type": "string", "maxLength": 200 },
+        "jobLocation": { "type": "string", "maxLength": 200 },
+        "department": { "type": "string", "maxLength": 200 },
+        "companyAddress": { "type": "string", "maxLength": 400 },
+        "hiringManager": { "type": "string", "maxLength": 200 },
+        "applicationDate": { "type": "string", "maxLength": 64 },
+        "status": {
+          "type": "string",
+          "enum": ["Saved", "Applied", "Interviewing", "Offer", "Archived"]
+        },
+        "jobDescription": { "type": "string", "maxLength": 50000 },
+        "sourceUrl": { "type": "string", "maxLength": 2048, "pattern": "^https?://.+" },
+        "jobStatus": {
+          "type": "string",
+          "enum": ["needs_extraction", "ready_for_tailoring", "needs_manual_input", "tailoring", "tailored", "failed"]
+        },
+        "selectedTask": {
+          "type": "string",
+          "enum": ["resume", "cover_letter", "both", null]
+        },
+        "taskStatus": {
+          "type": "string",
+          "enum": ["idle", "queued", "running", "done", "failed"]
+        },
+        "taskReason": { "type": "string", "maxLength": 300 },
+        "requiredQualifications": { "type": "array" },
+        "preferredQualifications": { "type": "array" },
+        "responsibilities": { "type": "array" },
+        "technicalRequirements": { "type": "array" },
+        "applicationNotes": { "type": "string", "maxLength": 20000 },
+        "analysis": { "type": "object" },
+        "noteCategory": { "type": "string", "maxLength": 40 },
+        "noteTheme": {
+          "type": "string",
+          "enum": ["purple", "yellow", "green", "blue", "pink", "graphite"]
+        },
+        "noteDate": { "type": "string", "maxLength": 32 },
+        "noteBannerType": { "type": "string", "maxLength": 40 },
+        "noteCustomImage": { "type": ["string", "null"], "maxLength": 800000 },
+        "isNoteOnly": { "type": "boolean" },
+        "createdAt": { "type": "string", "format": "date-time", "maxLength": 64 },
+        "updatedAt": { "type": "string", "format": "date-time", "maxLength": 64 }
+      },
+      "required": ["id", "status", "createdAt", "updatedAt"]
+    },
+    "ResumeDocument": {
+      "title": "ResumeDocument",
+      "description": "Tailored or master resume document belonging to the authenticated user.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "name": { "type": "string", "minLength": 1, "maxLength": 200 },
+        "version": { "type": "number" },
+        "isMaster": { "type": "boolean" },
+        "linkedJobId": { "type": "string", "maxLength": 128 },
+        "template": {
+          "type": "string",
+          "enum": ["professional", "modern", "minimal", "technical", "creative"]
+        },
+        "driveFileId": { "type": "string", "maxLength": 256 },
+        "driveWebViewLink": { "type": "string", "maxLength": 2048 },
+        "driveExportedAt": { "type": "string", "maxLength": 64 },
+        "driveFolderName": { "type": "string", "maxLength": 200 },
+        "driveSyncStatus": { "type": "string", "enum": ["synced", "pending_auth", "error"] },
+        "driveSyncError": { "type": "string", "maxLength": 500 },
+        "createdAt": { "type": "string", "format": "date-time", "maxLength": 64 },
+        "updatedAt": { "type": "string", "format": "date-time", "maxLength": 64 }
+      },
+      "required": ["id", "name", "version", "isMaster", "personal", "summary", "workExperience", "education", "skills", "sections", "template", "formatting", "createdAt", "updatedAt"]
+    },
+    "CoverLetterDocument": {
+      "title": "CoverLetterDocument",
+      "description": "Cover letter document belonging to the authenticated user.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "title": { "type": "string", "minLength": 1, "maxLength": 200 },
+        "version": { "type": "number" },
+        "linkedJobId": { "type": "string", "maxLength": 128 },
+        "linkedResumeId": { "type": "string", "maxLength": 128 },
+        "template": {
+          "type": "string",
+          "enum": ["traditional", "modern", "minimal", "technical", "creative"]
+        },
+        "driveFileId": { "type": "string", "maxLength": 256 },
+        "driveWebViewLink": { "type": "string", "maxLength": 2048 },
+        "driveExportedAt": { "type": "string", "maxLength": 64 },
+        "driveFolderName": { "type": "string", "maxLength": 200 },
+        "driveSyncStatus": { "type": "string", "enum": ["synced", "pending_auth", "error"] },
+        "driveSyncError": { "type": "string", "maxLength": 500 },
+        "createdAt": { "type": "string", "format": "date-time", "maxLength": 64 },
+        "updatedAt": { "type": "string", "format": "date-time", "maxLength": 64 }
+      },
+      "required": ["id", "title", "version", "applicant", "employer", "jobInfo", "content", "writingStyle", "length", "template", "formatting", "createdAt", "updatedAt"]
+    },
+    "CompanyResearch": {
+      "title": "CompanyResearch",
+      "description": "Company intelligence findings and citations linked to a job application.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "companyId": { "type": "string", "maxLength": 128 },
+        "jobApplicationId": { "type": "string", "maxLength": 128 },
+        "companyName": { "type": "string", "minLength": 1, "maxLength": 200 },
+        "researchDate": { "type": "string", "maxLength": 64 },
+        "status": { "type": "string", "maxLength": 40 },
+        "findings": { "type": "array" },
+        "sources": { "type": "array" },
+        "report": { "type": "object" },
+        "driveFileId": { "type": "string", "maxLength": 256 },
+        "driveWebViewLink": { "type": "string", "maxLength": 2048 },
+        "driveExportedAt": { "type": "string", "maxLength": 64 },
+        "driveFolderName": { "type": "string", "maxLength": 200 },
+        "driveSyncStatus": { "type": "string", "enum": ["synced", "pending_auth", "error"] },
+        "driveSyncError": { "type": "string", "maxLength": 500 }
+      },
+      "required": ["id", "jobApplicationId", "companyName", "researchDate", "status", "findings", "sources", "report"]
+    },
+    "WorkspaceMeta": {
+      "title": "WorkspaceMeta",
+      "description": "User workspace preferences, active document IDs, Drive export settings, and review scoring config.",
+      "type": "object",
+      "properties": {
+        "activeResumeId": { "type": "string", "maxLength": 128 },
+        "activeCoverLetterId": { "type": "string", "maxLength": 128 },
+        "activeReviewId": { "type": "string", "maxLength": 128 },
+        "reviewScoringConfig": { "type": "object" },
+        "driveExportSettings": { "type": "object" },
+        "updatedAt": { "type": "string", "maxLength": 64 }
+      }
+    },
+    "StickyNote": {
+      "title": "StickyNote",
+      "description": "Plain sticky notes for Tips, Sports, Ideas, Research, custom categories, and plain seed notes.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "theme": { "type": "string", "enum": ["purple", "yellow", "green", "blue", "pink", "graphite"] },
+        "category": { "type": "string", "minLength": 1, "maxLength": 40 },
+        "date": { "type": "string", "maxLength": 32 },
+        "bannerType": { "type": "string", "maxLength": 40 },
+        "customImage": { "type": ["string", "null"], "maxLength": 800000 },
+        "title": { "type": "string", "maxLength": 200 },
+        "body": { "type": "string", "maxLength": 50000 },
+        "createdAt": { "type": "string", "format": "date-time", "maxLength": 64 },
+        "updatedAt": { "type": "string", "format": "date-time", "maxLength": 64 }
+      },
+      "required": ["id", "theme", "category", "date", "title", "body", "createdAt", "updatedAt"]
+    }
+  },
+  "firestore": {
+    "/users/{uid}/profile/master": {
+      "schema": { "$ref": "#/entities/CareerProfile" },
+      "description": "Master CareerProfile document for the signed-in user."
+    },
+    "/users/{uid}/jobs/{jobId}": {
+      "schema": { "$ref": "#/entities/JobApplication" },
+      "description": "Saved job applications and job intake records for the signed-in user."
+    },
+    "/users/{uid}/resumes/{resumeId}": {
+      "schema": { "$ref": "#/entities/ResumeDocument" },
+      "description": "Master and job-tailored resumes owned by the signed-in user."
+    },
+    "/users/{uid}/coverLetters/{coverLetterId}": {
+      "schema": { "$ref": "#/entities/CoverLetterDocument" },
+      "description": "Cover letters owned by the signed-in user."
+    },
+    "/users/{uid}/companyResearch/{researchId}": {
+      "schema": { "$ref": "#/entities/CompanyResearch" },
+      "description": "Grounded company intelligence reports owned by the signed-in user."
+    },
+    "/users/{uid}/stickyNotes/{noteId}": {
+      "schema": { "$ref": "#/entities/StickyNote" },
+      "description": "Plain non-job-intake sticky notes owned by the signed-in user."
+    },
+    "/users/{uid}/workspace/{docId}": {
+      "schema": { "$ref": "#/entities/WorkspaceMeta" },
+      "description": "Active selections and workspace scoring configuration."
+    }
+  }
+}

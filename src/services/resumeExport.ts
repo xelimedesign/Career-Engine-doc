@@ -29,7 +29,7 @@ function formatDateRange(start: string, end: string, isCurrent?: boolean): strin
   return s || e || '';
 }
 
-export async function exportResumeToDocx(resume: ResumeDocument): Promise<void> {
+export async function buildResumeDocxBlob(resume: ResumeDocument): Promise<Blob> {
   const { formatting, personal, summary, workExperience, education, skills, projects, certifications, awards, volunteer, languages, publications, sections } = resume;
   const font = mapDocxFont(formatting.fontFamily);
   const bodySizeHalfPt = Math.round(formatting.fontSize * 2);
@@ -758,11 +758,15 @@ export async function exportResumeToDocx(resume: ResumeDocument): Promise<void> 
     ],
   });
 
-  const blob = await Packer.toBlob(doc);
+  return Packer.toBlob(doc);
+}
+
+export async function exportResumeToDocx(resume: ResumeDocument): Promise<void> {
+  const blob = await buildResumeDocxBlob(resume);
   triggerBlobDownload(blob, `${sanitizeFilename(resume.name, 'Resume')}.docx`);
 }
 
-export function exportResumeToPdf(resume: ResumeDocument): void {
+function buildResumePdfDocument(resume: ResumeDocument): jsPDF {
   const { formatting, personal, summary, workExperience, education, skills, projects, certifications, awards, volunteer, languages, publications, sections } = resume;
   const doc = new jsPDF({ unit: 'pt', format: 'letter' });
   const pageWidth = 612;
@@ -1061,5 +1065,13 @@ export function exportResumeToPdf(resume: ResumeDocument): void {
 
   sections.filter((s) => s.enabled).forEach((s) => renderSection(s.id));
 
-  doc.save(`${sanitizeFilename(resume.name, 'Resume')}.pdf`);
+  return doc;
+}
+
+export function buildResumePdfBlob(resume: ResumeDocument): Blob {
+  return buildResumePdfDocument(resume).output('blob');
+}
+
+export function exportResumeToPdf(resume: ResumeDocument): void {
+  buildResumePdfDocument(resume).save(`${sanitizeFilename(resume.name, 'Resume')}.pdf`);
 }

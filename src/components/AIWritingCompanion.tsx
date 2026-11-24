@@ -34,6 +34,11 @@ import {
   generateCompanionSuggestionWithAi,
 } from '../services/aiService';
 import { useOptionalCareer } from '../store/CareerContext';
+import {
+  AiLiveStreamState,
+  getAiLiveStream,
+  subscribeAiLiveStream,
+} from '../services/aiProviderConfig';
 
 export interface AIWritingCompanionProps {
   fieldType: CompanionFieldType;
@@ -111,6 +116,7 @@ export function AIWritingCompanion({
   const [regenGuidance, setRegenGuidance] = useState('');
   const [copied, setCopied] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
+  const [liveStream, setLiveStream] = useState<AiLiveStreamState>(() => getAiLiveStream());
 
   const sessionRef = useRef<AIWritingSessionRecord | null>(null);
   const currentSuggestionIdRef = useRef<string | null>(null);
@@ -247,13 +253,18 @@ export function AIWritingCompanion({
 
   useEffect(() => {
     if (!isOpen) return;
+    setLiveStream(getAiLiveStream());
+    const unsubStream = subscribeAiLiveStream(setLiveStream);
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
         closeAndCancel();
       }
     };
     window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
+    return () => {
+      unsubStream();
+      window.removeEventListener('keydown', onKey);
+    };
   }, [closeAndCancel, isOpen]);
 
   const currentQuestion = questions[currentIdx];
@@ -734,6 +745,11 @@ export function AIWritingCompanion({
                   <p className="text-xs text-slate-500 max-w-md mx-auto">
                     Checking verified experience, skills, and target job context so we only ask helpful, non-repetitive questions.
                   </p>
+                  {liveStream.active && liveStream.provider === 'ollama' && liveStream.tokensText && (
+                    <div className="mt-4 max-w-lg mx-auto text-left p-3 rounded-lg border border-slate-200 bg-slate-50 text-xs font-mono text-slate-700 max-h-32 overflow-y-auto whitespace-pre-wrap">
+                      {liveStream.tokensText}
+                    </div>
+                  )}
                 </div>
               ) : phase === 'generating' ? (
                 <div className="py-12 text-center space-y-3">
@@ -744,6 +760,11 @@ export function AIWritingCompanion({
                   <p className="text-xs text-slate-500 max-w-md mx-auto">
                     Checking every metric, tool, date, and qualification against your Career Profile and answers.
                   </p>
+                  {liveStream.active && liveStream.provider === 'ollama' && liveStream.tokensText && (
+                    <div className="mt-4 max-w-lg mx-auto text-left p-3 rounded-lg border border-slate-200 bg-slate-50 text-xs font-mono text-slate-700 max-h-32 overflow-y-auto whitespace-pre-wrap">
+                      {liveStream.tokensText}
+                    </div>
+                  )}
                 </div>
               ) : phase === 'interview' && analysis ? (
                 <div className="space-y-5">

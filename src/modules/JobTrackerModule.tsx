@@ -26,6 +26,7 @@ import {
 } from '../services/aiService';
 import { CompanyIntelligencePanel } from '../components/CompanyIntelligencePanel';
 import { AIWritingCompanion } from '../components/AIWritingCompanion';
+import { isValidHttpUrl } from '../data/stickyNotesData';
 
 const STATUS_OPTIONS: JobStatus[] = ['Saved', 'Applied', 'Interviewing', 'Offer', 'Archived'];
 
@@ -71,6 +72,8 @@ export function JobTrackerModule() {
   const [selectedResumeForLetter, setSelectedResumeForLetter] = useState<string>(
     resumes[0]?.id || ''
   );
+  const [sourceUrlDraft, setSourceUrlDraft] = useState<string>('');
+  const [sourceUrlError, setSourceUrlError] = useState<string | null>(null);
 
   const handleCreateNewJob = () => {
     const created = addJob({
@@ -106,12 +109,18 @@ export function JobTrackerModule() {
       !q ||
       job.company.toLowerCase().includes(q) ||
       job.jobTitle.toLowerCase().includes(q) ||
+      (job.sourceUrl || '').toLowerCase().includes(q) ||
       job.jobDescription.toLowerCase().includes(q);
     return matchesStatus && matchesQuery;
   });
 
   const activeJob: JobApplication | undefined =
     jobs.find((j) => j.id === selectedJobId) || filteredJobs[0] || jobs[0];
+
+  useEffect(() => {
+    setSourceUrlDraft(activeJob?.sourceUrl || '');
+    setSourceUrlError(null);
+  }, [activeJob?.id, activeJob?.sourceUrl]);
 
   const activeResearch = activeJob ? getCompanyResearchForJob(activeJob.id) : undefined;
   const activeMatch = activeJob ? getJobMatchForJob(activeJob.id) : undefined;
@@ -323,12 +332,22 @@ export function JobTrackerModule() {
                   }`}
                 >
                   <div className="text-sm font-semibold text-slate-900 truncate">
-                    {job.jobTitle || 'Untitled Role'}
+                    {job.jobTitle || job.company || (job.sourceUrl ? 'Job Request' : 'Untitled Role')}
                   </div>
                   <div className="flex items-center gap-2 text-xs text-slate-500 mt-1">
-                    <span className="truncate">{job.company || 'Company'}</span>
+                    <span className="truncate">
+                      {job.company || (job.sourceUrl ? job.sourceUrl.replace(/^https?:\/\//i, '') : 'Company')}
+                    </span>
                     <span aria-hidden="true">·</span>
                     <span className="shrink-0">{job.status}</span>
+                    {job.jobStatus && (
+                      <>
+                        <span aria-hidden="true">·</span>
+                        <span className="text-slate-700 font-medium truncate">
+                          {job.jobStatus}
+                        </span>
+                      </>
+                    )}
                     {hasResearch && (
                       <>
                         <span aria-hidden="true">·</span>
@@ -362,9 +381,16 @@ export function JobTrackerModule() {
             <div className="bg-white border border-slate-200 rounded-lg p-5 space-y-4">
               <div className="flex flex-wrap items-center justify-between gap-4">
                 <div>
-                  <h2 className="text-base font-semibold text-slate-900">
-                    {activeJob.jobTitle || 'Untitled Role'}
-                  </h2>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <h2 className="text-base font-semibold text-slate-900">
+                      {activeJob.jobTitle || (activeJob.sourceUrl ? 'Job Request' : 'Untitled Role')}
+                    </h2>
+                    {activeJob.jobStatus && (
+                      <span className="px-2 py-0.5 text-[11px] font-medium rounded border border-slate-200 bg-slate-50 text-slate-700">
+                        {activeJob.jobStatus}
+                      </span>
+                    )}
+                  </div>
                   <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-slate-500 mt-0.5">
                     <span>{activeJob.company || 'Company'}</span>
                     {activeJob.jobLocation && (
@@ -651,17 +677,81 @@ export function JobTrackerModule() {
                         className={INPUT_CLS}
                       />
                     </div>
+                    <div className="sm:col-span-2">
+                      <label className={LABEL_CLS}>Source Job Posting Link</label>
+                      <input
+                        type="url"
+                        value={sourceUrlDraft}
+                        onChange={(e) => {
+                          const raw = e.target.value;
+                          setSourceUrlDraft(raw);
+                          const trimmed = raw.trim();
+                          if (!trimmed) {
+                            setSourceUrlError(null);
+                            updateJob(activeJob.id, (p) => ({
+                              ...p,
+                              sourceUrl: undefined,
+                            }));
+                            return;
+                          }
+                          if (!isValidHttpUrl(trimmed)) {
+                            setSourceUrlError('Enter a valid URL starting with http:// or https://');
+                            return;
+                          }
+                          setSourceUrlError(null);
+                          updateJob(activeJob.id, (p) => ({
+                            ...p,
+                            sourceUrl: trimmed,
+                            jobStatus:
+                              p.jobStatus ||
+                              (p.jobDescription.trim() ? 'ready_for_tailoring' : 'needs_extraction'),
+                          }));
+                        }}
+                        placeholder="https://company.com/careers/role"
+                        className={`${INPUT_CLS} font-mono`}
+                      />
+                      {sourceUrlError && (
+                        <p className="mt-1 text-[11px] text-rose-600">{sourceUrlError}</p>
+                      )}
+                    </div>
+                    <div>
+                      <label className={LABEL_CLS}>Intake Status</label>
+                      <input
+                        type="text"
+                        readOnly
+                        value={
+                          activeJob.jobStatus ||
+                          (activeJob.jobDescription.trim()
+                            ? 'ready_for_tailoring'
+                            : 'needs_manual_input')
+                        }
+                        className={`${INPUT_CLS} bg-slate-50 text-slate-600 font-mono`}
+                      />
+                    </div>
                     <div className="sm:col-span-3">
                       <label className={LABEL_CLS}>Job Description</label>
                       <textarea
                         rows={6}
                         value={activeJob.jobDescription}
-                        onChange={(e) =>
+                        onChange={(e) => {
+                          const nextDesc = e.target.value;
+                          const hasDesc = nextDesc.trim().length > 0;
                           updateJob(activeJob.id, (p) => ({
                             ...p,
-                            jobDescription: e.target.value,
-                          }))
-                        }
+                            jobDescription: nextDesc,
+                            jobStatus:
+                              hasDesc &&
+                              (!p.jobStatus ||
+                                p.jobStatus === 'needs_extraction' ||
+                                p.jobStatus === 'needs_manual_input')
+                                ? 'ready_for_tailoring'
+                                : !hasDesc &&
+                                    p.sourceUrl &&
+                                    p.jobStatus === 'ready_for_tailoring'
+                                  ? 'needs_extraction'
+                                  : p.jobStatus,
+                          }));
+                        }}
                         placeholder="Paste the full job posting here, then click Company Research or Analyze Job..."
                         className={`${INPUT_CLS} leading-relaxed`}
                       />

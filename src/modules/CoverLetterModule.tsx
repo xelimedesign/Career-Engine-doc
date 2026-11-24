@@ -115,12 +115,15 @@ export function CoverLetterModule() {
     documentSnapshots,
     recordDocumentSnapshot,
     undoLatestSnapshotForDocument,
+    exportDocumentToDrive,
+    notifyDocumentMilestoneExport,
   } = useCareer();
 
   const [centerTab, setCenterTab] = useState<'letter' | 'parties' | 'job' | 'formatting' | 'quality'>('letter');
   const [editingTitle, setEditingTitle] = useState(false);
   const [titleDraft, setTitleDraft] = useState('');
   const [exportingDocx, setExportingDocx] = useState(false);
+  const [exportingDrive, setExportingDrive] = useState(false);
   const [mobilePanel, setMobilePanel] = useState<'left' | 'center' | 'right'>('center');
   const [pageCount, setPageCount] = useState(1);
 
@@ -364,6 +367,9 @@ export function CoverLetterModule() {
       };
     });
     setPendingReview(null);
+    setTimeout(() => {
+      notifyDocumentMilestoneExport('cover-letter', activeCoverLetter.id);
+    }, 0);
   };
 
   const handleExportDocx = async () => {
@@ -372,6 +378,17 @@ export function CoverLetterModule() {
       await exportCoverLetterToDocx(activeCoverLetter);
     } finally {
       setExportingDocx(false);
+    }
+  };
+
+  const handleExportDrive = async () => {
+    setExportingDrive(true);
+    try {
+      await exportDocumentToDrive({ kind: 'cover-letter', id: activeCoverLetter.id });
+    } catch {
+      // Error surfaced cleanly via CareerContext driveError banner
+    } finally {
+      setExportingDrive(false);
     }
   };
 
@@ -1564,6 +1581,10 @@ export function CoverLetterModule() {
             onExportDocx={handleExportDocx}
             onExportPdf={() => exportCoverLetterToPdf(activeCoverLetter)}
             isExportingDocx={exportingDocx}
+            onExportDrive={handleExportDrive}
+            isExportingDrive={exportingDrive}
+            driveWebViewLink={activeCoverLetter.driveWebViewLink}
+            driveSyncStatus={activeCoverLetter.driveSyncStatus}
             onPageCountChange={setPageCount}
           />
         </section>

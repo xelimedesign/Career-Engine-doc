@@ -1,5 +1,15 @@
 import React, { useLayoutEffect, useRef, useState } from 'react';
-import { ChevronLeft, ChevronRight, Download, FileText, ZoomIn, ZoomOut } from 'lucide-react';
+import {
+  ChevronLeft,
+  ChevronRight,
+  Download,
+  ExternalLink,
+  FileText,
+  FolderUp,
+  Loader2,
+  ZoomIn,
+  ZoomOut,
+} from 'lucide-react';
 
 export interface PreviewBlock {
   id: string;
@@ -14,6 +24,10 @@ interface PaginatedPaperPreviewProps {
   onExportDocx: () => Promise<void> | void;
   onExportPdf: () => void;
   isExportingDocx?: boolean;
+  onExportDrive?: () => Promise<void> | void;
+  isExportingDrive?: boolean;
+  driveWebViewLink?: string;
+  driveSyncStatus?: 'synced' | 'pending_auth' | 'error';
   onPageCountChange?: (count: number) => void;
 }
 
@@ -28,6 +42,10 @@ export function PaginatedPaperPreview({
   onExportDocx,
   onExportPdf,
   isExportingDocx = false,
+  onExportDrive,
+  isExportingDrive = false,
+  driveWebViewLink,
+  driveSyncStatus,
   onPageCountChange,
 }: PaginatedPaperPreviewProps) {
   const [zoom, setZoom] = useState<number>(0.68);
@@ -183,6 +201,38 @@ export function PaginatedPaperPreview({
             <FileText className="w-3.5 h-3.5" />
             PDF
           </button>
+          {onExportDrive && (
+            <button
+              type="button"
+              disabled={isExportingDrive}
+              onClick={onExportDrive}
+              title="Save a copy to your Google Drive Career Engine DOC folder"
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-slate-800 bg-white border border-slate-300 rounded-md hover:bg-slate-50 disabled:opacity-50 transition-colors cursor-pointer whitespace-nowrap shrink-0"
+            >
+              {isExportingDrive ? (
+                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+              ) : (
+                <FolderUp className="w-3.5 h-3.5 text-emerald-700" />
+              )}
+              {isExportingDrive
+                ? 'Saving...'
+                : driveSyncStatus === 'pending_auth'
+                  ? 'Retry Drive'
+                  : 'Drive'}
+            </button>
+          )}
+          {driveWebViewLink && (
+            <a
+              href={driveWebViewLink}
+              target="_blank"
+              rel="noopener noreferrer"
+              title="Open last exported file in Google Drive"
+              className="inline-flex items-center gap-1 px-2 py-1.5 text-xs font-medium text-emerald-800 bg-emerald-50 border border-emerald-200 rounded-md hover:bg-emerald-100 whitespace-nowrap shrink-0"
+            >
+              <ExternalLink className="w-3 h-3" />
+              <span className="hidden xl:inline">In Drive</span>
+            </a>
+          )}
         </div>
       </div>
 

@@ -77,6 +77,8 @@ export function ResumeBuilderModule() {
     documentSnapshots,
     recordDocumentSnapshot,
     undoLatestSnapshotForDocument,
+    exportDocumentToDrive,
+    notifyDocumentMilestoneExport,
   } = useCareer();
 
   const [activeSection, setActiveSection] = useState<'personal' | ResumeSectionKey>('personal');
@@ -84,6 +86,7 @@ export function ResumeBuilderModule() {
   const [editingName, setEditingName] = useState(false);
   const [nameDraft, setNameDraft] = useState('');
   const [exportingDocx, setExportingDocx] = useState(false);
+  const [exportingDrive, setExportingDrive] = useState(false);
   const [mobilePanel, setMobilePanel] = useState<'left' | 'center' | 'right'>('center');
   const [pageCount, setPageCount] = useState(1);
 
@@ -249,6 +252,9 @@ export function ResumeBuilderModule() {
       };
     });
     setAiProposal(null);
+    setTimeout(() => {
+      notifyDocumentMilestoneExport('resume', activeResume.id);
+    }, 0);
   };
 
   const handleCreateTailoredCopy = (jobId: string) => {
@@ -263,6 +269,17 @@ export function ResumeBuilderModule() {
       await exportResumeToDocx(activeResume);
     } finally {
       setExportingDocx(false);
+    }
+  };
+
+  const handleExportDrive = async () => {
+    setExportingDrive(true);
+    try {
+      await exportDocumentToDrive({ kind: 'resume', id: activeResume.id });
+    } catch {
+      // Error surfaced cleanly via CareerContext driveError banner
+    } finally {
+      setExportingDrive(false);
     }
   };
 
@@ -1238,6 +1255,10 @@ export function ResumeBuilderModule() {
             onExportDocx={handleExportDocx}
             onExportPdf={() => exportResumeToPdf(activeResume)}
             isExportingDocx={exportingDocx}
+            onExportDrive={handleExportDrive}
+            isExportingDrive={exportingDrive}
+            driveWebViewLink={activeResume.driveWebViewLink}
+            driveSyncStatus={activeResume.driveSyncStatus}
             onPageCountChange={setPageCount}
           />
         </section>

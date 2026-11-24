@@ -1,0 +1,361 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Global default deny
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(uid) {
+      return isSignedIn() && request.auth.uid == uid;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isValidProfile(data) {
+      return data.keys().hasAll([
+        'personal',
+        'summary',
+        'workExperience',
+        'education',
+        'skills',
+        'projects',
+        'updatedAt'
+      ]) &&
+      data.personal is map &&
+      data.summary is map &&
+      data.workExperience is list && data.workExperience.size() <= 60 &&
+      data.education is list && data.education.size() <= 30 &&
+      data.skills is map &&
+      data.projects is list && data.projects.size() <= 60 &&
+      data.updatedAt is string && data.updatedAt.size() > 0 && data.updatedAt.size() <= 64;
+    }
+
+    function isValidJob(data, jobId) {
+      return data.keys().hasAll([
+        'id',
+        'status',
+        'createdAt',
+        'updatedAt'
+      ]) &&
+      data.keys().hasOnly([
+        'id',
+        'companyId',
+        'company',
+        'companyWebsite',
+        'jobTitle',
+        'jobLocation',
+        'department',
+        'companyAddress',
+        'hiringManager',
+        'applicationDate',
+        'status',
+        'jobDescription',
+        'sourceUrl',
+        'jobStatus',
+        'selectedTask',
+        'taskStatus',
+        'taskReason',
+        'requiredQualifications',
+        'preferredQualifications',
+        'responsibilities',
+        'technicalRequirements',
+        'applicationNotes',
+        'analysis',
+        'noteCategory',
+        'noteTheme',
+        'noteDate',
+        'noteBannerType',
+        'noteCustomImage',
+        'isNoteOnly',
+        'createdAt',
+        'updatedAt'
+      ]) &&
+      data.id is string &&
+      data.id == jobId &&
+      (!('company' in data) || (data.company is string && data.company.size() <= 200)) &&
+      (!('jobTitle' in data) || (data.jobTitle is string && data.jobTitle.size() <= 200)) &&
+      data.status is string &&
+      data.status in ['Saved', 'Applied', 'Interviewing', 'Offer', 'Archived'] &&
+      data.createdAt is string &&
+      data.createdAt.size() > 0 &&
+      data.createdAt.size() <= 64 &&
+      data.updatedAt is string &&
+      data.updatedAt.size() > 0 &&
+      data.updatedAt.size() <= 64 &&
+      (!('jobDescription' in data) || (data.jobDescription is string && data.jobDescription.size() <= 50000)) &&
+      (!('sourceUrl' in data) || (data.sourceUrl is string && data.sourceUrl.size() <= 2048 && data.sourceUrl.matches('^https?://.+'))) &&
+      (!('jobStatus' in data) || (data.jobStatus is string && data.jobStatus in ['needs_extraction', 'ready_for_tailoring', 'needs_manual_input', 'tailoring', 'tailored', 'failed'])) &&
+      (!('selectedTask' in data) || data.selectedTask == null || (data.selectedTask is string && data.selectedTask in ['resume', 'cover_letter', 'both'])) &&
+      (!('taskStatus' in data) || (data.taskStatus is string && data.taskStatus in ['idle', 'queued', 'running', 'done', 'failed'])) &&
+      (!('taskReason' in data) || (data.taskReason is string && data.taskReason.size() <= 300)) &&
+      (!('companyId' in data) || (data.companyId is string && data.companyId.size() <= 128)) &&
+      (!('companyWebsite' in data) || (data.companyWebsite is string && data.companyWebsite.size() <= 2048)) &&
+      (!('jobLocation' in data) || (data.jobLocation is string && data.jobLocation.size() <= 200)) &&
+      (!('department' in data) || (data.department is string && data.department.size() <= 200)) &&
+      (!('companyAddress' in data) || (data.companyAddress is string && data.companyAddress.size() <= 400)) &&
+      (!('hiringManager' in data) || (data.hiringManager is string && data.hiringManager.size() <= 200)) &&
+      (!('applicationDate' in data) || (data.applicationDate is string && data.applicationDate.size() <= 64)) &&
+      (!('requiredQualifications' in data) || (data.requiredQualifications is list && data.requiredQualifications.size() <= 100)) &&
+      (!('preferredQualifications' in data) || (data.preferredQualifications is list && data.preferredQualifications.size() <= 100)) &&
+      (!('responsibilities' in data) || (data.responsibilities is list && data.responsibilities.size() <= 100)) &&
+      (!('technicalRequirements' in data) || (data.technicalRequirements is list && data.technicalRequirements.size() <= 100)) &&
+      (!('applicationNotes' in data) || (data.applicationNotes is string && data.applicationNotes.size() <= 20000)) &&
+      (!('analysis' in data) || data.analysis is map) &&
+      (!('noteCategory' in data) || (data.noteCategory is string && data.noteCategory.size() <= 40)) &&
+      (!('noteTheme' in data) || (data.noteTheme is string && data.noteTheme in ['purple', 'yellow', 'green', 'blue', 'pink', 'graphite'])) &&
+      (!('noteDate' in data) || (data.noteDate is string && data.noteDate.size() <= 32)) &&
+      (!('noteBannerType' in data) || (data.noteBannerType is string && data.noteBannerType.size() <= 40)) &&
+      (!('noteCustomImage' in data) || data.noteCustomImage == null || (data.noteCustomImage is string && data.noteCustomImage.size() <= 800000)) &&
+      (!('isNoteOnly' in data) || data.isNoteOnly is bool);
+    }
+
+    function isValidResume(data, resumeId) {
+      return data.keys().hasAll([
+        'id',
+        'name',
+        'version',
+        'isMaster',
+        'personal',
+        'summary',
+        'workExperience',
+        'education',
+        'skills',
+        'sections',
+        'template',
+        'formatting',
+        'createdAt',
+        'updatedAt'
+      ]) &&
+      data.id is string &&
+      data.id == resumeId &&
+      data.name is string &&
+      data.name.size() >= 1 &&
+      data.name.size() <= 200 &&
+      data.version is number &&
+      data.isMaster is bool &&
+      data.template is string &&
+      data.template in ['professional', 'modern', 'minimal', 'technical', 'creative'] &&
+      data.createdAt is string && data.createdAt.size() <= 64 &&
+      data.updatedAt is string && data.updatedAt.size() <= 64;
+    }
+
+    function isValidCoverLetter(data, coverLetterId) {
+      return data.keys().hasAll([
+        'id',
+        'title',
+        'version',
+        'applicant',
+        'employer',
+        'jobInfo',
+        'content',
+        'writingStyle',
+        'length',
+        'template',
+        'formatting',
+        'createdAt',
+        'updatedAt'
+      ]) &&
+      data.id is string &&
+      data.id == coverLetterId &&
+      data.title is string &&
+      data.title.size() >= 1 &&
+      data.title.size() <= 200 &&
+      data.version is number &&
+      data.template is string &&
+      data.template in ['traditional', 'modern', 'minimal', 'technical', 'creative'] &&
+      data.createdAt is string && data.createdAt.size() <= 64 &&
+      data.updatedAt is string && data.updatedAt.size() <= 64;
+    }
+
+    function isValidCompanyResearch(data, researchId) {
+      return data.keys().hasAll([
+        'id',
+        'jobApplicationId',
+        'companyName',
+        'researchDate',
+        'status',
+        'findings',
+        'sources',
+        'report'
+      ]) &&
+      data.id is string &&
+      data.id == researchId &&
+      data.jobApplicationId is string &&
+      data.jobApplicationId.size() >= 1 &&
+      data.jobApplicationId.size() <= 128 &&
+      data.companyName is string &&
+      data.companyName.size() >= 1 &&
+      data.companyName.size() <= 200 &&
+      data.researchDate is string && data.researchDate.size() <= 64 &&
+      data.status is string && data.status.size() <= 40 &&
+      data.findings is list &&
+      data.sources is list &&
+      data.report is map;
+    }
+
+    // Master Career Profile (users/{uid}/profile/master)
+    match /users/{uid}/profile/master {
+      allow get: if isOwner(uid);
+      allow create: if isOwner(uid) && isValidProfile(incoming());
+      allow update: if isOwner(uid) && isValidProfile(incoming());
+      allow delete: if isOwner(uid);
+    }
+
+    // Saved Jobs & Job Intake Records (users/{uid}/jobs/{jobId})
+    match /users/{uid}/jobs/{jobId} {
+      allow get: if isOwner(uid) && isValidId(jobId);
+      allow list: if isOwner(uid);
+      allow create: if isOwner(uid) && isValidId(jobId) && isValidJob(incoming(), jobId);
+      allow update: if isOwner(uid) &&
+        isValidId(jobId) &&
+        isValidJob(incoming(), jobId) &&
+        incoming().id == existing().id &&
+        incoming().createdAt == existing().createdAt;
+      allow delete: if isOwner(uid) && isValidId(jobId);
+    }
+
+    // Resumes (users/{uid}/resumes/{resumeId})
+    match /users/{uid}/resumes/{resumeId} {
+      allow get: if isOwner(uid) && isValidId(resumeId);
+      allow list: if isOwner(uid);
+      allow create: if isOwner(uid) && isValidId(resumeId) && isValidResume(incoming(), resumeId);
+      allow update: if isOwner(uid) &&
+        isValidId(resumeId) &&
+        isValidResume(incoming(), resumeId) &&
+        incoming().id == existing().id &&
+        incoming().createdAt == existing().createdAt;
+      allow delete: if isOwner(uid) && isValidId(resumeId);
+    }
+
+    // Cover Letters (users/{uid}/coverLetters/{coverLetterId})
+    match /users/{uid}/coverLetters/{coverLetterId} {
+      allow get: if isOwner(uid) && isValidId(coverLetterId);
+      allow list: if isOwner(uid);
+      allow create: if isOwner(uid) && isValidId(coverLetterId) && isValidCoverLetter(incoming(), coverLetterId);
+      allow update: if isOwner(uid) &&
+        isValidId(coverLetterId) &&
+        isValidCoverLetter(incoming(), coverLetterId) &&
+        incoming().id == existing().id &&
+        incoming().createdAt == existing().createdAt;
+      allow delete: if isOwner(uid) && isValidId(coverLetterId);
+    }
+
+    // Company Research (users/{uid}/companyResearch/{researchId})
+    match /users/{uid}/companyResearch/{researchId} {
+      allow get: if isOwner(uid) && isValidId(researchId);
+      allow list: if isOwner(uid);
+      allow create: if isOwner(uid) && isValidId(researchId) && isValidCompanyResearch(incoming(), researchId);
+      allow update: if isOwner(uid) &&
+        isValidId(researchId) &&
+        isValidCompanyResearch(incoming(), researchId) &&
+        incoming().id == existing().id;
+      allow delete: if isOwner(uid) && isValidId(researchId);
+    }
+
+    // Secondary workspace state & auxiliary collections (strictly owner-scoped)
+    match /users/{uid}/workspace/{docId} {
+      allow get, create, update, delete: if isOwner(uid) && isValidId(docId);
+      allow list: if isOwner(uid);
+    }
+
+    match /users/{uid}/companies/{companyId} {
+      allow get, create, update, delete: if isOwner(uid) && isValidId(companyId);
+      allow list: if isOwner(uid);
+    }
+
+    match /users/{uid}/jobMatches/{matchId} {
+      allow get, create, update, delete: if isOwner(uid) && isValidId(matchId);
+      allow list: if isOwner(uid);
+    }
+
+    match /users/{uid}/reviews/{reviewId} {
+      allow get, create, update, delete: if isOwner(uid) && isValidId(reviewId);
+      allow list: if isOwner(uid);
+    }
+
+    match /users/{uid}/snapshots/{snapshotId} {
+      allow get, create, update, delete: if isOwner(uid) && isValidId(snapshotId);
+      allow list: if isOwner(uid);
+    }
+
+    function isValidStickyNote(data, noteId) {
+      return data.keys().hasAll([
+        'id',
+        'theme',
+        'category',
+        'date',
+        'title',
+        'body',
+        'createdAt',
+        'updatedAt'
+      ]) &&
+      data.keys().hasOnly([
+        'id',
+        'theme',
+        'category',
+        'date',
+        'bannerType',
+        'customImage',
+        'title',
+        'body',
+        'createdAt',
+        'updatedAt'
+      ]) &&
+      data.id is string &&
+      data.id == noteId &&
+      data.theme is string &&
+      data.theme in ['purple', 'yellow', 'green', 'blue', 'pink', 'graphite'] &&
+      data.category is string &&
+      data.category.size() >= 1 &&
+      data.category.size() <= 40 &&
+      data.date is string &&
+      data.date.size() <= 32 &&
+      data.title is string &&
+      data.title.size() <= 200 &&
+      data.body is string &&
+      data.body.size() <= 50000 &&
+      data.createdAt is string &&
+      data.createdAt.size() > 0 &&
+      data.createdAt.size() <= 64 &&
+      data.updatedAt is string &&
+      data.updatedAt.size() > 0 &&
+      data.updatedAt.size() <= 64 &&
+      (!('bannerType' in data) || (data.bannerType is string && data.bannerType.size() <= 40)) &&
+      (!('customImage' in data) || data.customImage == null || (data.customImage is string && data.customImage.size() <= 800000));
+    }
+
+    // Plain Sticky Notes (Tips, Sports, Ideas, Research, custom categories, and plain seed notes)
+    match /users/{uid}/stickyNotes/{noteId} {
+      allow get: if isOwner(uid) && isValidId(noteId);
+      allow list: if isOwner(uid);
+      allow create: if isOwner(uid) && isValidId(noteId) && isValidStickyNote(incoming(), noteId);
+      allow update: if isOwner(uid) &&
+        isValidId(noteId) &&
+        isValidStickyNote(incoming(), noteId) &&
+        incoming().id == existing().id &&
+        incoming().createdAt == existing().createdAt;
+      allow delete: if isOwner(uid) && isValidId(noteId);
+    }
+
+    match /users/{uid}/aiWritingSessions/{sessionId} {
+      allow get, create, update, delete: if isOwner(uid) && isValidId(sessionId);
+      allow list: if isOwner(uid);
+    }
+  }
+}
