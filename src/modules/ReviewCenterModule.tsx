@@ -112,6 +112,33 @@ export function ReviewCenterModule() {
     clearReviewLaunchTarget();
   }, [clearReviewLaunchTarget, reviewLaunchTarget]);
 
+  // Keep selections synchronized when items are created or deleted
+  useEffect(() => {
+    if (resumes.length === 0) {
+      if (selectedResumeId) setSelectedResumeId('');
+    } else if (!resumes.some((r) => r.id === selectedResumeId)) {
+      setSelectedResumeId(activeResumeId || resumes[0].id);
+    }
+  }, [resumes, activeResumeId, selectedResumeId]);
+
+  useEffect(() => {
+    if (coverLetters.length === 0) {
+      if (selectedCoverLetterId) setSelectedCoverLetterId('');
+    } else if (!coverLetters.some((c) => c.id === selectedCoverLetterId)) {
+      setSelectedCoverLetterId(activeCoverLetterId || coverLetters[0].id);
+    }
+  }, [coverLetters, activeCoverLetterId, selectedCoverLetterId]);
+
+  useEffect(() => {
+    if (jobs.length === 0) {
+      if (selectedTargetJobId) setSelectedTargetJobId('');
+    } else if (!jobs.some((j) => j.id === selectedTargetJobId)) {
+      setSelectedTargetJobId(jobs[0].id);
+    }
+  }, [jobs, selectedTargetJobId]);
+
+  const hasAnyDocuments = resumes.length > 0 || coverLetters.length > 0;
+
   const targetResume = resumes.find((r) => r.id === selectedResumeId);
   const targetCoverLetter = coverLetters.find((c) => c.id === selectedCoverLetterId);
   const targetJob = jobs.find((j) => j.id === selectedTargetJobId);
@@ -271,7 +298,7 @@ export function ReviewCenterModule() {
           <div>
             <h1 className="text-lg font-semibold text-slate-900">AI Application Review Center</h1>
             <p className="text-xs text-slate-500 mt-0.5">
-              Audits resumes, cover letters, ATS parseability, company alignment, and factual consistency against your verified Career Profile before submission.
+              Audits resumes, cover letters, ATS parseability, company alignment, and factual consistency against your verified Career Profile. Review scores and suggestions are advisory — verify details before submitting applications.
             </p>
           </div>
 
@@ -286,7 +313,7 @@ export function ReviewCenterModule() {
             </button>
             <button
               type="button"
-              disabled={runningReview}
+              disabled={runningReview || !hasAnyDocuments}
               onClick={handleRunReview}
               className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-semibold text-white bg-slate-900 hover:bg-slate-800 rounded-md cursor-pointer disabled:opacity-50 whitespace-nowrap shrink-0"
             >
@@ -491,19 +518,50 @@ export function ReviewCenterModule() {
       {!activeReview && tab !== 'history' ? (
         <div className="bg-white border border-slate-200 rounded-lg p-12 text-center space-y-3">
           <FileSearch className="w-8 h-8 text-slate-400 mx-auto" />
-          <h2 className="text-sm font-semibold text-slate-900">No Application Review Run Yet</h2>
-          <p className="text-xs text-slate-500 max-w-lg mx-auto leading-relaxed">
-            Select your resume, cover letter, and target job above, then click <strong>Run Application Review</strong> to execute the Resume Auditor, Cover Letter Auditor, Job Match Analyst, Company Alignment check, 10-point ATS Validation, and Career Profile Fact Checker.
-          </p>
-          <button
-            type="button"
-            disabled={runningReview}
-            onClick={handleRunReview}
-            className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-semibold text-white bg-slate-900 hover:bg-slate-800 rounded-md cursor-pointer"
-          >
-            <Sparkles className="w-3.5 h-3.5" />
-            Run First Application Review
-          </button>
+          {!hasAnyDocuments ? (
+            <>
+              <h2 className="text-sm font-semibold text-slate-900">
+                Create a resume or cover letter to review
+              </h2>
+              <p className="text-xs text-slate-500 max-w-lg mx-auto leading-relaxed">
+                Your workspace does not have any saved resumes or cover letters yet. Create at least one document first, then return here to run ATS checks, fact verification, and job-match scoring.
+              </p>
+              <div className="flex flex-wrap items-center justify-center gap-2 pt-1">
+                <button
+                  type="button"
+                  onClick={() => setActiveModule('resumes')}
+                  className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-semibold text-white bg-slate-900 hover:bg-slate-800 rounded-md cursor-pointer"
+                >
+                  <FileText className="w-3.5 h-3.5" />
+                  Go to Resumes
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setActiveModule('cover-letters')}
+                  className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-semibold text-slate-800 bg-white border border-slate-300 hover:bg-slate-50 rounded-md cursor-pointer"
+                >
+                  <Mail className="w-3.5 h-3.5" />
+                  Go to Cover Letters
+                </button>
+              </div>
+            </>
+          ) : (
+            <>
+              <h2 className="text-sm font-semibold text-slate-900">No Application Review Run Yet</h2>
+              <p className="text-xs text-slate-500 max-w-lg mx-auto leading-relaxed">
+                Select your resume, cover letter, and target job above, then click <strong>Run Application Review</strong> to execute the Resume Auditor, Cover Letter Auditor, Job Match Analyst, Company Alignment check, 10-point ATS Validation, and Career Profile Fact Checker.
+              </p>
+              <button
+                type="button"
+                disabled={runningReview}
+                onClick={handleRunReview}
+                className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-semibold text-white bg-slate-900 hover:bg-slate-800 rounded-md cursor-pointer"
+              >
+                <Sparkles className="w-3.5 h-3.5" />
+                Run First Application Review
+              </button>
+            </>
+          )}
         </div>
       ) : (
         <>

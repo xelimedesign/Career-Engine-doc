@@ -10,6 +10,7 @@ import {
   ZoomIn,
   ZoomOut,
 } from 'lucide-react';
+import { toSafeHttpUrl } from '../utils/urlSafety';
 
 export interface PreviewBlock {
   id: string;
@@ -221,9 +222,9 @@ export function PaginatedPaperPreview({
                   : 'Drive'}
             </button>
           )}
-          {driveWebViewLink && (
+          {toSafeHttpUrl(driveWebViewLink) && (
             <a
-              href={driveWebViewLink}
+              href={toSafeHttpUrl(driveWebViewLink)}
               target="_blank"
               rel="noopener noreferrer"
               title="Open last exported file in Google Drive"

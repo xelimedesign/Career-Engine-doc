@@ -124,6 +124,7 @@ export interface CareerProfile {
   languages: LanguageItem[];
   publications: PublicationItem[];
   updatedAt: string;
+  lastImportedAt?: string;
 }
 
 export type ResumeSectionKey =
@@ -501,6 +502,15 @@ export interface CompanyResearch {
   jobApplicationId: string;
   companyName: string;
   companyWebsite: string;
+  website?: string | null;
+  headquarters?: string | null;
+  overview?: string | null;
+  coreFocus?: string[];
+  missingInfo?: string[];
+  autofilledFields?: {
+    company?: boolean;
+    companyWebsite?: boolean;
+  };
   jobLocation: string;
   researchDate: string;
   status: 'idle' | 'researching' | 'completed' | 'error';

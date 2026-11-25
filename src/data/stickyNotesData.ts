@@ -53,7 +53,7 @@ export const STICKY_NOTE_THEMES: Record<StickyNoteThemeId, StickyNoteThemeConfig
   },
 };
 
-export const DEFAULT_STICKY_CATEGORIES = ['Tips', 'Jobs', 'Sports', 'Ideas', 'Research'];
+export const DEFAULT_STICKY_CATEGORIES = ['Tips', 'Jobs', 'Ideas', 'Research'];
 
 export const DEFAULT_NOTE_PLACEHOLDER = 'Tap to edit this sticky note...';
 
@@ -64,92 +64,7 @@ export function getFormattedStickyDate(date = new Date()): string {
   return `${mm}/${dd}/${yyyy}`;
 }
 
-export const DEFAULT_STICKY_NOTES: StickyNoteItem[] = [
-  {
-    id: 'note-1',
-    theme: 'purple',
-    category: 'Tips',
-    date: '10/29/2026',
-    bannerType: 'banner-screenshot',
-    customImage: null,
-    title: 'Capture screenshots in 1-click',
-    body: 'Easily remember anything on your screen with just one click while using other apps! Perfect for saving receipts, inspiration, or quick visual reminders.',
-    createdAt: '2026-10-29T10:00:00.000Z',
-    updatedAt: '2026-10-29T10:00:00.000Z',
-  },
-  {
-    id: 'note-2',
-    theme: 'purple',
-    category: 'Tips',
-    date: '10/29/2026',
-    bannerType: 'banner-source',
-    customImage: null,
-    title: 'Automatic source capture',
-    body: 'Easily remember the original source of your notes. When you revisit the same document or webpage, your linked notes surface automatically.',
-    createdAt: '2026-10-29T09:50:00.000Z',
-    updatedAt: '2026-10-29T09:50:00.000Z',
-  },
-  {
-    id: 'note-3',
-    theme: 'purple',
-    category: 'Tips',
-    date: '10/29/2026',
-    bannerType: 'banner-shortcut',
-    customImage: null,
-    title: 'Quickly open with a shortcut',
-    body: 'Press Alt + S anytime inside Career Engine to bring up Sticky Notes immediately without interrupting your workflow.',
-    createdAt: '2026-10-29T09:40:00.000Z',
-    updatedAt: '2026-10-29T09:40:00.000Z',
-  },
-  {
-    id: 'note-4',
-    theme: 'blue',
-    category: 'Jobs',
-    date: '11/19/2026',
-    bannerType: 'none',
-    customImage: null,
-    title: 'Senior Product Designer — Final Loop',
-    body: 'Prepare portfolio walkthrough focusing on Windows design systems, accessibility tokens, and cross-platform prototyping. Confirm panel schedule with recruiter by Thursday.',
-    createdAt: '2026-11-19T10:00:00.000Z',
-    updatedAt: '2026-11-19T10:00:00.000Z',
-  },
-  {
-    id: 'note-5',
-    theme: 'green',
-    category: 'Sports',
-    date: '11/19/2026',
-    bannerType: 'none',
-    customImage: null,
-    title: 'Half-Marathon Training & Game Schedule',
-    body: 'Tempo run 6 miles @ 7:45/mi pace on Tuesday. Catch Saturday afternoon kickoff and track weekly recovery mobility + hydration targets.',
-    createdAt: '2026-11-19T09:50:00.000Z',
-    updatedAt: '2026-11-19T09:50:00.000Z',
-  },
-  {
-    id: 'note-6',
-    theme: 'yellow',
-    category: 'Ideas',
-    date: '11/19/2026',
-    bannerType: 'none',
-    customImage: null,
-    title: 'Ambient Workspace Companion Widget',
-    body: 'Build a lightweight desktop dock that pairs quick voice-to-sticky capture with automatic webpage citation tags and keyboard-first filtering.',
-    createdAt: '2026-11-19T09:40:00.000Z',
-    updatedAt: '2026-11-19T09:40:00.000Z',
-  },
-  {
-    id: 'note-7',
-    theme: 'graphite',
-    category: 'Research',
-    date: '11/19/2026',
-    bannerType: 'banner-source',
-    customImage: null,
-    title: 'Local-First Sync & CRDT Benchmarks',
-    body: 'Compare IndexedDB vs. SQLite WASM read latency for 10k+ rich-text notes. Evaluate conflict-free merging strategies for offline multi-device edits.',
-    createdAt: '2026-11-19T09:30:00.000Z',
-    updatedAt: '2026-11-19T09:30:00.000Z',
-  },
-];
+export const DEFAULT_STICKY_NOTES: StickyNoteItem[] = [];
 
 export function isValidHttpUrl(raw: string): boolean {
   const trimmed = raw.trim();

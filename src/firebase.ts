@@ -17,11 +17,38 @@ export const db = firestoreDatabaseId
   ? getFirestore(app, firestoreDatabaseId)
   : getFirestore(app);
 export const auth = getAuth(app);
+export const googleAuthProvider = new GoogleAuthProvider();
+googleAuthProvider.setCustomParameters({ prompt: 'select_account' });
+
 export const googleProvider = new GoogleAuthProvider();
 googleProvider.setCustomParameters({ prompt: 'select_account' });
 GOOGLE_WORKSPACE_SCOPES.forEach((scope) => {
   googleProvider.addScope(scope);
 });
+
+export function formatFirebaseAuthError(err: unknown): string | null {
+  const code =
+    typeof err === 'object' && err !== null && 'code' in err
+      ? String((err as { code?: unknown }).code)
+      : '';
+  if (code === 'auth/popup-closed-by-user' || code === 'auth/cancelled-popup-request') {
+    return null;
+  }
+  if (code === 'auth/unauthorized-domain') {
+    const host = typeof window !== 'undefined' ? window.location.hostname : 'this domain';
+    return `Domain "${host}" is not authorized in Firebase Authentication. Add it under Firebase Console → Authentication → Settings → Authorized domains.`;
+  }
+  if (code === 'auth/popup-blocked') {
+    return 'Sign-in popup was blocked by your browser. Allow popups for this site and try again.';
+  }
+  if (code === 'auth/operation-not-allowed') {
+    return 'Google Sign-In is disabled in Firebase Console → Authentication → Sign-in method.';
+  }
+  if (code) {
+    return `Sign-in failed (${code}). Check Firebase Authorized Domains and Google Cloud OAuth Consent Screen settings.`;
+  }
+  return 'Sign-in failed. Please try again.';
+}
 
 // Strict in-memory Google Workspace OAuth access token cache (never stored in Web Storage)
 let cachedDriveAccessToken: string | null = null;

@@ -86,6 +86,12 @@ export interface JobAnalyzeResult extends JobAnalysis {
 }
 
 export interface CompanyResearchApiResponse {
+  companyName?: string;
+  website?: string | null;
+  headquarters?: string | null;
+  overview?: string | null;
+  coreFocus?: string[];
+  missingInfo?: string[];
   officialWebsite: string;
   industry: string;
   services: string[];
@@ -96,6 +102,16 @@ export interface CompanyResearchApiResponse {
   sources: ResearchSource[];
   report: CompanyIntelligenceReport;
   fromCache?: boolean;
+  needsClientSynthesis?: boolean;
+  resolvedCompanyName?: string;
+  candidateWebsite?: string;
+  retrievedSnippets?: Array<{
+    title: string;
+    url: string;
+    snippet: string;
+    sourceType?: ResearchSource['sourceType'];
+    isOfficial?: boolean;
+  }>;
 }
 
 function sanitizeReportField(
@@ -155,14 +171,24 @@ export function buildApprovedCompanyIntelligencePayload(research?: CompanyResear
   const approvedFindings = research.findings.filter(
     (f) => f.verificationStatus === 'approved'
   );
+  const activeFindings = research.findings.filter(
+    (f) => f.verificationStatus !== 'dismissed'
+  );
   const unreviewedCount = research.findings.filter(
     (f) => f.verificationStatus === 'pending' || f.verificationStatus === 'needs_verification'
   ).length;
   return {
     companyName: research.companyName,
-    companyWebsite: research.companyWebsite,
+    companyWebsite: research.website || research.companyWebsite,
+    website: research.website || research.companyWebsite || null,
+    headquarters: research.headquarters || null,
+    overview: research.overview || research.report.companyOverview || null,
+    coreFocus: research.coreFocus || [],
+    missingInfo: research.missingInfo || [],
+    sources: research.sources.map((s) => ({ title: s.title, url: s.url })),
     overallConfidence: research.overallConfidence,
     report: sanitizeCompanyReport(research.report, dismissedFindings),
+    findings: activeFindings,
     approvedFindings,
     excludedDismissedCount: dismissedFindings.length,
     unreviewedFindingsOmitted: unreviewedCount,
@@ -187,17 +213,37 @@ export function sanitizeCompanyResearchForReview(
 }
 
 export async function researchCompanyWithAi(params: {
+  jobId?: string;
+  resolvedCompanyName?: string;
   companyName: string;
   companyWebsite?: string;
   jobTitle?: string;
   jobDescription?: string;
   jobLocation?: string;
+  sourceUrl?: string;
   forceRefresh?: boolean;
 }): Promise<CompanyResearchApiResponse> {
-  if (getAiProviderConfig().provider === 'ollama') {
-    return ollamaResearchCompany(params);
+  const aiConfig = getAiProviderConfig();
+  const serverRes = await postJson<CompanyResearchApiResponse>('/api/jobs/company-research', {
+    ...params,
+    aiConfig,
+  });
+
+  if (serverRes.needsClientSynthesis) {
+    return ollamaResearchCompany({
+      companyName: serverRes.resolvedCompanyName || serverRes.companyName || params.resolvedCompanyName || params.companyName,
+      companyWebsite: serverRes.candidateWebsite || params.companyWebsite,
+      jobTitle: params.jobTitle,
+      jobDescription: params.jobDescription,
+      jobLocation: params.jobLocation,
+      sourceUrl: params.sourceUrl,
+      retrievedSnippets: serverRes.retrievedSnippets,
+      sources: serverRes.sources,
+      searchQueries: serverRes.searchQueries,
+    });
   }
-  return postJson<CompanyResearchApiResponse>('/api/research/company', params);
+
+  return serverRes;
 }
 
 export async function runThreeWayJobMatchWithAi(params: {
@@ -239,6 +285,7 @@ export async function analyzeJobWithAi(params: {
 export async function assistResumeWithAi(params: {
   action: ResumeAssistAction;
   resume: ResumeDocument;
+  careerProfile?: CareerProfile;
   targetJob?: JobApplication;
   experienceId?: string;
   companyResearch?: CompanyResearch;
@@ -249,6 +296,7 @@ export async function assistResumeWithAi(params: {
     return ollamaAssistResume({
       action: params.action,
       resume: params.resume,
+      careerProfile: params.careerProfile,
       targetJob: params.targetJob,
       experienceId: params.experienceId,
       companyIntelligence,
@@ -258,6 +306,7 @@ export async function assistResumeWithAi(params: {
   return postJson<ResumeAssistResponse>('/api/ai/resume-assist', {
     action: params.action,
     resume: params.resume,
+    careerProfile: params.careerProfile,
     targetJob: params.targetJob,
     experienceId: params.experienceId,
     companyIntelligence,

@@ -2,9 +2,13 @@ import { ResumeDocument, ResumeSectionKey } from '../types/career';
 import { PreviewBlock } from './PaginatedPaperPreview';
 import { mapCssFont } from '../services/exportHelpers';
 
-function formatDateRange(start: string, end: string, isCurrent?: boolean): string {
-  const s = start.trim();
-  const e = isCurrent ? 'Present' : end.trim();
+function safeTrim(val?: string | null): string {
+  return typeof val === 'string' ? val.trim() : '';
+}
+
+function formatDateRange(start?: string | null, end?: string | null, isCurrent?: boolean): string {
+  const s = safeTrim(start);
+  const e = isCurrent ? 'Present' : safeTrim(end);
   if (s && e) return `${s} – ${e}`;
   return s || e || '';
 }
@@ -13,22 +17,19 @@ export function buildResumePreviewBlocks(resume: ResumeDocument): {
   blocks: PreviewBlock[];
   paperColor: string;
 } {
-  const {
-    personal,
-    summary,
-    workExperience,
-    education,
-    skills,
-    projects,
-    certifications,
-    awards,
-    volunteer,
-    languages,
-    publications,
-    sections,
-    template,
-    formatting,
-  } = resume;
+  const personal = resume.personal || ({} as ResumeDocument['personal']);
+  const summary = resume.summary || ({} as ResumeDocument['summary']);
+  const workExperience = Array.isArray(resume.workExperience) ? resume.workExperience : [];
+  const education = Array.isArray(resume.education) ? resume.education : [];
+  const skills = resume.skills || { technical: [], software: [], professional: [], industry: [] };
+  const projects = Array.isArray(resume.projects) ? resume.projects : [];
+  const certifications = Array.isArray(resume.certifications) ? resume.certifications : [];
+  const awards = Array.isArray(resume.awards) ? resume.awards : [];
+  const volunteer = Array.isArray(resume.volunteer) ? resume.volunteer : [];
+  const languages = Array.isArray(resume.languages) ? resume.languages : [];
+  const publications = Array.isArray(resume.publications) ? resume.publications : [];
+  const sections = Array.isArray(resume.sections) ? resume.sections : [];
+  const { template, formatting } = resume;
 
   const fontFamilyCss = mapCssFont(formatting.fontFamily);
   const bodySizePx = formatting.fontSize * 1.333;
@@ -55,7 +56,7 @@ export function buildResumePreviewBlocks(resume: ResumeDocument): {
     personal.portfolio,
     personal.website,
   ]
-    .map((v) => v.trim())
+    .map(safeTrim)
     .filter(Boolean);
 
   // Header Block
@@ -98,7 +99,7 @@ export function buildResumePreviewBlocks(resume: ResumeDocument): {
         >
           {personal.fullName || 'Your Full Name'}
         </div>
-        {personal.title.trim() && (
+        {safeTrim(personal.title) && (
           <div
             style={{
               fontSize: `${bodySizePx + 1.5}px`,
@@ -149,7 +150,7 @@ export function buildResumePreviewBlocks(resume: ResumeDocument): {
   const renderSection = (key: ResumeSectionKey) => {
     switch (key) {
       case 'summary': {
-        if (!summary.headline.trim() && !summary.summary.trim() && !summary.careerObjectives.trim()) {
+        if (!safeTrim(summary.headline) && !safeTrim(summary.summary) && !safeTrim(summary.careerObjectives)) {
           return;
         }
         blocks.push({
@@ -157,17 +158,17 @@ export function buildResumePreviewBlocks(resume: ResumeDocument): {
           node: (
             <div style={{ fontFamily: fontFamilyCss, fontSize: `${bodySizePx}px`, lineHeight: formatting.lineSpacing }}>
               {makeSectionHeader('summary', template === 'modern' ? 'About' : 'Professional Summary')}
-              {summary.headline.trim() && (
+              {safeTrim(summary.headline) && (
                 <div style={{ fontWeight: 600, color: '#1C1917', marginBottom: '4px' }}>
                   {summary.headline}
                 </div>
               )}
-              {summary.summary.trim() && (
-                <div style={{ color: '#292524', marginBottom: summary.careerObjectives.trim() ? '4px' : '0' }}>
+              {safeTrim(summary.summary) && (
+                <div style={{ color: '#292524', marginBottom: safeTrim(summary.careerObjectives) ? '4px' : '0' }}>
                   {summary.summary}
                 </div>
               )}
-              {summary.careerObjectives.trim() && (
+              {safeTrim(summary.careerObjectives) && (
                 <div style={{ color: '#57534E', fontStyle: 'italic' }}>{summary.careerObjectives}</div>
               )}
             </div>
@@ -180,8 +181,8 @@ export function buildResumePreviewBlocks(resume: ResumeDocument): {
         if (workExperience.length === 0) return;
         workExperience.forEach((exp, idx) => {
           const dateRange = formatDateRange(exp.startDate, exp.endDate, exp.isCurrent);
-          const subMeta = [exp.company, exp.employmentType, exp.location].filter((x) => x.trim()).join(' · ');
-          const bullets = [...exp.responsibilities, ...exp.achievements].filter((b) => b.trim());
+          const subMeta = [exp.company, exp.employmentType, exp.location].map(safeTrim).filter(Boolean).join(' · ');
+          const bullets = [...(exp.responsibilities || []), ...(exp.achievements || [])].map(safeTrim).filter(Boolean);
 
           blocks.push({
             id: `exp-${exp.id}`,
@@ -233,7 +234,7 @@ export function buildResumePreviewBlocks(resume: ResumeDocument): {
                     ))}
                   </ul>
                 )}
-                {exp.technologies.length > 0 && (
+                {Array.isArray(exp.technologies) && exp.technologies.length > 0 && (
                   <div
                     style={{
                       marginTop: '4px',
@@ -284,7 +285,7 @@ export function buildResumePreviewBlocks(resume: ResumeDocument): {
                   )}
                 </div>
                 {degreeLine && <div style={{ color: '#44403C' }}>{degreeLine}</div>}
-                {edu.details.trim() && (
+                {safeTrim(edu.details) && (
                   <div style={{ color: '#57534E', fontSize: `${Math.max(10.5, bodySizePx - 1)}px`, marginTop: '2px' }}>
                     {edu.details}
                   </div>
@@ -298,11 +299,11 @@ export function buildResumePreviewBlocks(resume: ResumeDocument): {
 
       case 'skills': {
         const categories = [
-          { label: 'Technical', items: skills.technical },
-          { label: 'Software & Tools', items: skills.software },
-          { label: 'Professional', items: skills.professional },
-          { label: 'Industry', items: skills.industry },
-        ].filter((c) => c.items.length > 0);
+          { label: 'Technical', items: skills?.technical || [] },
+          { label: 'Software & Tools', items: skills?.software || [] },
+          { label: 'Professional', items: skills?.professional || [] },
+          { label: 'Industry', items: skills?.industry || [] },
+        ].filter((c) => c.items && c.items.length > 0);
         if (categories.length === 0) return;
 
         blocks.push({
@@ -327,7 +328,7 @@ export function buildResumePreviewBlocks(resume: ResumeDocument): {
       case 'projects': {
         if (projects.length === 0) return;
         projects.forEach((proj, idx) => {
-          const dateRange = formatDateRange(proj.startDate, proj.endDate);
+          const dateRange = formatDateRange((proj as any).startDate, (proj as any).endDate);
           blocks.push({
             id: `proj-${proj.id}`,
             node: (
@@ -343,7 +344,7 @@ export function buildResumePreviewBlocks(resume: ResumeDocument): {
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: '12px' }}>
                   <div style={{ fontWeight: 600, color: '#1C1917' }}>
                     {proj.name}
-                    {proj.role ? ` — ${proj.role}` : ''}
+                    {(proj as any).role ? ` — ${(proj as any).role}` : ''}
                   </div>
                   {dateRange && (
                     <div
@@ -358,11 +359,11 @@ export function buildResumePreviewBlocks(resume: ResumeDocument): {
                     </div>
                   )}
                 </div>
-                {proj.url.trim() && (
+                {safeTrim(proj.url) && (
                   <div style={{ fontSize: `${Math.max(10, bodySizePx - 1.5)}px`, color: accent }}>{proj.url}</div>
                 )}
-                {proj.description.trim() && <div style={{ color: '#292524', marginTop: '2px' }}>{proj.description}</div>}
-                {proj.technologies.length > 0 && (
+                {safeTrim(proj.description) && <div style={{ color: '#292524', marginTop: '2px' }}>{proj.description}</div>}
+                {proj.technologies && proj.technologies.length > 0 && (
                   <div style={{ fontSize: `${Math.max(10, bodySizePx - 1.5)}px`, color: '#57534E', marginTop: '2px' }}>
                     Stack: {proj.technologies.join(', ')}
                   </div>
@@ -424,7 +425,7 @@ export function buildResumePreviewBlocks(resume: ResumeDocument): {
                       </div>
                     )}
                   </div>
-                  {aw.description.trim() && <div style={{ color: '#57534E' }}>{aw.description}</div>}
+                  {safeTrim(aw.description) && <div style={{ color: '#57534E' }}>{aw.description}</div>}
                 </div>
               ))}
             </div>
@@ -454,7 +455,7 @@ export function buildResumePreviewBlocks(resume: ResumeDocument): {
                         </div>
                       )}
                     </div>
-                    {v.description.trim() && <div style={{ color: '#292524' }}>{v.description}</div>}
+                    {safeTrim(v.description) && <div style={{ color: '#292524' }}>{v.description}</div>}
                   </div>
                 );
               })}
@@ -500,10 +501,10 @@ export function buildResumePreviewBlocks(resume: ResumeDocument): {
                       </div>
                     )}
                   </div>
-                  {pub.url.trim() && (
+                  {safeTrim(pub.url) && (
                     <div style={{ fontSize: `${Math.max(10, bodySizePx - 1.5)}px`, color: accent }}>{pub.url}</div>
                   )}
-                  {pub.summary.trim() && <div style={{ color: '#57534E' }}>{pub.summary}</div>}
+                  {safeTrim(pub.summary) && <div style={{ color: '#57534E' }}>{pub.summary}</div>}
                 </div>
               ))}
             </div>

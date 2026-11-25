@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   Building2,
   FileText,
@@ -27,6 +27,11 @@ import {
 import { CompanyIntelligencePanel } from '../components/CompanyIntelligencePanel';
 import { AIWritingCompanion } from '../components/AIWritingCompanion';
 import { isValidHttpUrl } from '../data/stickyNotesData';
+import {
+  isJobBoardOrAggregatorUrl,
+  isPlaceholderOrAggregatorName,
+  resolveCandidateCompany,
+} from '../utils/companyResolver';
 
 const STATUS_OPTIONS: JobStatus[] = ['Saved', 'Applied', 'Interviewing', 'Offer', 'Archived'];
 
@@ -65,7 +70,7 @@ export function JobTrackerModule() {
   const [statusFilter, setStatusFilter] = useState<string>('All');
   const [analyzing, setAnalyzing] = useState(false);
   const [analyzeError, setAnalyzeError] = useState<string | null>(null);
-  const [researching, setResearching] = useState(false);
+  const [researchingJobId, setResearchingJobId] = useState<string | null>(null);
   const [researchError, setResearchError] = useState<string | null>(null);
   const [matching, setMatching] = useState(false);
   const [matchError, setMatchError] = useState<string | null>(null);
@@ -74,12 +79,13 @@ export function JobTrackerModule() {
   );
   const [sourceUrlDraft, setSourceUrlDraft] = useState<string>('');
   const [sourceUrlError, setSourceUrlError] = useState<string | null>(null);
+  const activeJobIdRef = useRef<string>('');
 
   const handleCreateNewJob = () => {
     const created = addJob({
-      company: 'New Company',
+      company: '',
       companyWebsite: '',
-      jobTitle: 'Target Role',
+      jobTitle: '',
       jobLocation: '',
       department: '',
       companyAddress: '',
@@ -116,11 +122,25 @@ export function JobTrackerModule() {
 
   const activeJob: JobApplication | undefined =
     jobs.find((j) => j.id === selectedJobId) || filteredJobs[0] || jobs[0];
+  activeJobIdRef.current = activeJob?.id || '';
+
+  const isResearchingActiveJob = Boolean(activeJob && researchingJobId === activeJob.id);
 
   useEffect(() => {
     setSourceUrlDraft(activeJob?.sourceUrl || '');
     setSourceUrlError(null);
+    setResearchError(null);
   }, [activeJob?.id, activeJob?.sourceUrl]);
+
+  useEffect(() => {
+    if (resumes.length === 0) {
+      if (selectedResumeForLetter) setSelectedResumeForLetter('');
+      return;
+    }
+    if (!resumes.some((r) => r.id === selectedResumeForLetter)) {
+      setSelectedResumeForLetter(resumes[0].id);
+    }
+  }, [resumes, selectedResumeForLetter]);
 
   const activeResearch = activeJob ? getCompanyResearchForJob(activeJob.id) : undefined;
   const activeMatch = activeJob ? getJobMatchForJob(activeJob.id) : undefined;
@@ -128,7 +148,8 @@ export function JobTrackerModule() {
     ? companies.find(
         (c) =>
           c.id === activeJob.companyId ||
-          c.companyName.toLowerCase() === activeJob.company.toLowerCase()
+          (activeJob.company.trim() &&
+            c.companyName.toLowerCase() === activeJob.company.toLowerCase())
       )
     : undefined;
 
@@ -170,42 +191,99 @@ export function JobTrackerModule() {
 
   const handleResearchCompany = async (forceRefresh = false) => {
     if (!activeJob) return;
-    if (!activeJob.company.trim()) {
-      setResearchError('Enter a company name before running Company Research.');
-      return;
-    }
-    setDetailTab('intelligence');
+    const targetJob = activeJob;
+    const resolution = resolveCandidateCompany(targetJob);
+
+    const existingSafeWebsite =
+      targetJob.companyWebsite && !isJobBoardOrAggregatorUrl(targetJob.companyWebsite)
+        ? targetJob.companyWebsite.trim()
+        : '';
+
     setResearchError(null);
-    setResearching(true);
+    setResearchingJobId(targetJob.id);
     try {
       const res = await researchCompanyWithAi({
-        companyName: activeJob.company,
-        companyWebsite: activeJob.companyWebsite,
-        jobTitle: activeJob.jobTitle,
-        jobDescription: activeJob.jobDescription,
-        jobLocation: activeJob.jobLocation,
+        jobId: targetJob.id,
+        resolvedCompanyName: resolution.resolvedCompanyName || undefined,
+        companyName: targetJob.company,
+        companyWebsite: existingSafeWebsite || resolution.candidateWebsite || undefined,
+        jobTitle: targetJob.jobTitle,
+        jobDescription: targetJob.jobDescription,
+        jobLocation: targetJob.jobLocation,
+        sourceUrl: targetJob.sourceUrl,
         forceRefresh,
       });
 
       const now = new Date().toISOString();
+      const groundedCompanyName = [res.companyName, resolution.resolvedCompanyName]
+        .map((c) => (typeof c === 'string' ? c.trim() : ''))
+        .find((c) => Boolean(c) && !isPlaceholderOrAggregatorName(c)) || '';
+      const existingRealCompany = !isPlaceholderOrAggregatorName(targetJob.company)
+        ? targetJob.company.trim()
+        : '';
+      const recordCompanyName = (
+        groundedCompanyName ||
+        existingRealCompany ||
+        'Unverified Employer'
+      )
+        .trim()
+        .slice(0, 200);
+
+      const rawWebsiteCandidates = [
+        res.website,
+        res.officialWebsite,
+        existingSafeWebsite,
+        resolution.candidateWebsite,
+      ];
+      const resolvedWebsite = (
+        rawWebsiteCandidates.find(
+          (candidate) =>
+            typeof candidate === 'string' &&
+            candidate.trim() &&
+            !isJobBoardOrAggregatorUrl(candidate)
+        ) || ''
+      )
+        .trim()
+        .slice(0, 2048);
+
+      const wasCompanyBlank =
+        !targetJob.company.trim() || isPlaceholderOrAggregatorName(targetJob.company);
+      const wasWebsiteBlank =
+        !(targetJob.companyWebsite || '').trim() ||
+        isJobBoardOrAggregatorUrl(targetJob.companyWebsite);
+
       const companyId = activeCompanyProfile?.id || `comp-${crypto.randomUUID().slice(0, 8)}`;
       const companyProfile: CompanyProfile = {
         id: companyId,
-        companyName: activeJob.company,
-        officialWebsite: res.officialWebsite || activeJob.companyWebsite || '',
+        companyName: recordCompanyName,
+        officialWebsite: resolvedWebsite,
         industry: res.industry || activeCompanyProfile?.industry || '',
-        services: res.services.length > 0 ? res.services : activeCompanyProfile?.services || [],
-        description: res.description || res.report.companyOverview || '',
+        services:
+          res.services.length > 0
+            ? res.services
+            : res.coreFocus && res.coreFocus.length > 0
+            ? res.coreFocus
+            : activeCompanyProfile?.services || [],
+        description: res.overview || res.description || res.report.companyOverview || '',
         updatedAt: now,
       };
 
       const researchRecord: CompanyResearch = {
         id: activeResearch?.id || `resch-${crypto.randomUUID().slice(0, 8)}`,
         companyId,
-        jobApplicationId: activeJob.id,
-        companyName: activeJob.company,
-        companyWebsite: res.officialWebsite || activeJob.companyWebsite || '',
-        jobLocation: activeJob.jobLocation || '',
+        jobApplicationId: targetJob.id,
+        companyName: recordCompanyName,
+        companyWebsite: resolvedWebsite,
+        website: res.website ?? (resolvedWebsite || null),
+        headquarters: res.headquarters ?? null,
+        overview: res.overview ?? (res.description || res.report.companyOverview || null),
+        coreFocus: res.coreFocus ?? res.services ?? [],
+        missingInfo: res.missingInfo ?? [],
+        autofilledFields: {
+          company: wasCompanyBlank && Boolean(groundedCompanyName),
+          companyWebsite: wasWebsiteBlank && Boolean(resolvedWebsite),
+        },
+        jobLocation: targetJob.jobLocation || '',
         researchDate: now,
         status: 'completed',
         overallConfidence: res.overallConfidence,
@@ -216,13 +294,18 @@ export function JobTrackerModule() {
         report: res.report,
       };
 
-      saveCompanyResearch(activeJob.id, researchRecord, companyProfile);
+      saveCompanyResearch(targetJob.id, researchRecord, companyProfile);
+      setResearchError(null);
+
+      if (activeJobIdRef.current === targetJob.id) {
+        setDetailTab('intelligence');
+      }
     } catch (err) {
       setResearchError(
         err instanceof Error ? err.message : 'Company research request failed.'
       );
     } finally {
-      setResearching(false);
+      setResearchingJobId((prev) => (prev === targetJob.id ? null : prev));
     }
   };
 
@@ -366,12 +449,16 @@ export function JobTrackerModule() {
       <main className="space-y-5">
         {!activeJob ? (
           <div className="bg-white border border-slate-200 rounded-lg p-12 text-center space-y-3">
-            <p className="text-sm text-slate-600">No job application selected.</p>
+            <h2 className="text-sm font-semibold text-slate-900">Track your first job application</h2>
+            <p className="text-xs text-slate-500 max-w-md mx-auto leading-relaxed">
+              Add a role to paste a job posting link or description, run grounded Company Research, check skill alignment, and tailor your resume and cover letter.
+            </p>
             <button
               type="button"
               onClick={handleCreateNewJob}
-              className="px-4 py-2 text-xs font-semibold text-white bg-slate-900 rounded-md cursor-pointer"
+              className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-semibold text-white bg-slate-900 hover:bg-slate-800 rounded-md cursor-pointer"
             >
+              <Plus className="w-3.5 h-3.5" />
               Add First Job Application
             </button>
           </div>
@@ -413,16 +500,16 @@ export function JobTrackerModule() {
                 <div className="flex flex-wrap items-center gap-2">
                   <button
                     type="button"
-                    disabled={researching}
+                    disabled={isResearchingActiveJob}
                     onClick={() => handleResearchCompany(false)}
                     className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-semibold text-slate-900 bg-slate-100 hover:bg-slate-200 rounded-md cursor-pointer disabled:opacity-50"
                   >
-                    {researching ? (
+                    {isResearchingActiveJob ? (
                       <RefreshCw className="w-3.5 h-3.5 animate-spin" />
                     ) : (
                       <Building2 className="w-3.5 h-3.5" />
                     )}
-                    {researching ? 'Researching...' : 'Company Research'}
+                    {isResearchingActiveJob ? 'Researching...' : 'Company Research'}
                   </button>
 
                   <button
@@ -517,16 +604,21 @@ export function JobTrackerModule() {
                 <button
                   type="button"
                   onClick={() => setDetailTab('intelligence')}
-                  className={`flex-1 py-1.5 text-xs font-medium rounded-md transition-colors cursor-pointer ${
+                  className={`flex-1 py-1.5 text-xs font-medium rounded-md transition-colors cursor-pointer inline-flex items-center justify-center gap-1.5 ${
                     detailTab === 'intelligence'
                       ? 'bg-white text-slate-900 shadow-xs'
                       : 'text-slate-600 hover:text-slate-900'
                   }`}
                 >
-                  Company Intelligence{' '}
-                  {activeResearch?.status === 'completed'
-                    ? `(${activeResearch.findings.length})`
-                    : ''}
+                  {isResearchingActiveJob && <RefreshCw className="w-3 h-3 animate-spin" />}
+                  <span>
+                    Company Intelligence
+                    {isResearchingActiveJob
+                      ? ' · Researching...'
+                      : activeResearch?.status === 'completed'
+                      ? ` (${activeResearch.findings.length})`
+                      : ''}
+                  </span>
                 </button>
                 <button
                   type="button"
@@ -547,6 +639,11 @@ export function JobTrackerModule() {
                 {analyzeError}
               </div>
             )}
+            {researchError && detailTab !== 'intelligence' && (
+              <div className="p-3 bg-rose-50 border border-rose-200 rounded-lg text-xs text-rose-800">
+                {researchError}
+              </div>
+            )}
 
             {/* TAB 1: Structured Job Form + Job Analyzer */}
             {detailTab === 'details' && (
@@ -554,7 +651,19 @@ export function JobTrackerModule() {
                 <div className="bg-white border border-slate-200 rounded-lg p-5 space-y-4">
                   <div className="grid grid-cols-1 sm:grid-cols-3 gap-3.5">
                     <div>
-                      <label className={LABEL_CLS}>Company Name</label>
+                      <div className="flex items-center justify-between gap-2 mb-1">
+                        <label className="block text-xs font-medium text-slate-600">
+                          Company Name
+                        </label>
+                        {activeResearch?.autofilledFields?.company &&
+                          activeJob.company.trim() &&
+                          activeJob.company.trim().toLowerCase() ===
+                            activeResearch.companyName.trim().toLowerCase() && (
+                            <span className="text-[10px] font-medium text-emerald-700">
+                              Filled from Company Research
+                            </span>
+                          )}
+                      </div>
                       <input
                         type="text"
                         value={activeJob.company}
@@ -595,7 +704,19 @@ export function JobTrackerModule() {
                       </select>
                     </div>
                     <div>
-                      <label className={LABEL_CLS}>Company Website</label>
+                      <div className="flex items-center justify-between gap-2 mb-1">
+                        <label className="block text-xs font-medium text-slate-600">
+                          Company Website
+                        </label>
+                        {activeResearch?.autofilledFields?.companyWebsite &&
+                          activeJob.companyWebsite?.trim() &&
+                          activeJob.companyWebsite.trim() ===
+                            (activeResearch.website || activeResearch.companyWebsite || '').trim() && (
+                            <span className="text-[10px] font-medium text-emerald-700">
+                              Filled from Company Research
+                            </span>
+                          )}
+                      </div>
                       <div className="relative">
                         <Globe className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-2.5" />
                         <input
@@ -620,7 +741,7 @@ export function JobTrackerModule() {
                         onChange={(e) =>
                           updateJob(activeJob.id, (p) => ({ ...p, jobLocation: e.target.value }))
                         }
-                        placeholder="San Francisco, CA (Hybrid)"
+                        placeholder="City, State (or Remote)"
                         className={INPUT_CLS}
                       />
                     </div>
@@ -646,7 +767,7 @@ export function JobTrackerModule() {
                         onChange={(e) =>
                           updateJob(activeJob.id, (p) => ({ ...p, hiringManager: e.target.value }))
                         }
-                        placeholder="Maya Chen"
+                        placeholder="Hiring Manager (if listed)"
                         className={INPUT_CLS}
                       />
                     </div>
@@ -658,7 +779,7 @@ export function JobTrackerModule() {
                         onChange={(e) =>
                           updateJob(activeJob.id, (p) => ({ ...p, department: e.target.value }))
                         }
-                        placeholder="Core Product Platform"
+                        placeholder="Department or Team"
                         className={INPUT_CLS}
                       />
                     </div>
@@ -673,7 +794,7 @@ export function JobTrackerModule() {
                             companyAddress: e.target.value,
                           }))
                         }
-                        placeholder="548 Market St, San Francisco, CA"
+                        placeholder="Street Address, City, State"
                         className={INPUT_CLS}
                       />
                     </div>
@@ -888,7 +1009,7 @@ export function JobTrackerModule() {
                 companyProfile={activeCompanyProfile}
                 research={activeResearch}
                 jobMatch={activeMatch}
-                researching={researching}
+                researching={isResearchingActiveJob}
                 matching={matching}
                 researchError={researchError}
                 matchError={matchError}

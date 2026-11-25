@@ -40,7 +40,7 @@ export function QualityReportPanel({
               <span className="text-sm font-mono-tabular text-slate-400">/ {report.maxScore}</span>
             </div>
             <p className="text-[11px] text-slate-500">
-              Career Engine Standards Model inspired by Harvard Career Services writing and formatting guidelines.
+              Career Doc Standards Model inspired by Harvard Career Services writing and formatting guidelines.
             </p>
           </div>
 

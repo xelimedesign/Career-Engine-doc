@@ -1,5 +1,15 @@
 import { useEffect, useState } from 'react';
-import { Cloud, CloudAlert, Loader2, LogIn, LogOut, SlidersHorizontal } from 'lucide-react';
+import {
+  BookOpen,
+  Cloud,
+  CloudAlert,
+  Loader2,
+  LogIn,
+  LogOut,
+  RotateCcw,
+  SlidersHorizontal,
+  UserX,
+} from 'lucide-react';
 import { AppModule } from '../types/career';
 import { useCareer } from '../store/CareerContext';
 import {
@@ -8,6 +18,8 @@ import {
   getAiProviderConfig,
   subscribeAiProviderConfig,
 } from '../services/aiProviderConfig';
+import { formatFirebaseAuthError } from '../firebase';
+import { CareerEngineIcon } from './CareerEngineIcon';
 
 const NAV_ITEMS: Array<{ id: AppModule; label: string }> = [
   { id: 'profile', label: 'Profile' },
@@ -18,17 +30,27 @@ const NAV_ITEMS: Array<{ id: AppModule; label: string }> = [
   { id: 'documents', label: 'Documents' },
 ];
 
-export function TopNav({ onOpenAiSettings }: { onOpenAiSettings: () => void }) {
+export function TopNav({
+  onOpenAiSettings,
+  onOpenWelcomeModal,
+  onOpenResetModal,
+}: {
+  onOpenAiSettings: () => void;
+  onOpenWelcomeModal: () => void;
+  onOpenResetModal: () => void;
+}) {
   const {
     activeModule,
     setActiveModule,
     createResume,
     createCoverLetter,
     user,
+    isGuest,
     authLoading,
     syncStatus,
     signInWithGoogle,
     signOutUser,
+    exitGuestMode,
     openStickyNotes,
     isStickyNotesOpen,
     isStickyNotesMinimized,
@@ -59,12 +81,9 @@ export function TopNav({ onOpenAiSettings }: { onOpenAiSettings: () => void }) {
     try {
       await signInWithGoogle();
     } catch (err) {
-      const code =
-        typeof err === 'object' && err !== null && 'code' in err
-          ? String((err as { code?: unknown }).code)
-          : '';
-      if (code !== 'auth/popup-closed-by-user' && code !== 'auth/cancelled-popup-request') {
-        setAuthMessage('Sign-in failed. Please try again.');
+      const msg = formatFirebaseAuthError(err);
+      if (msg) {
+        setAuthMessage(msg);
       }
     } finally {
       setAuthBusy(false);
@@ -93,18 +112,24 @@ export function TopNav({ onOpenAiSettings }: { onOpenAiSettings: () => void }) {
   const providerDisplay = formatHeaderProviderLabel(aiConfig);
 
   return (
-    <header className="sticky top-0 z-30 h-14 bg-white border-b border-slate-200 px-6 flex items-center justify-between gap-4">
+    <header className="sticky top-0 z-30 min-h-14 bg-white border-b border-slate-200 px-4 sm:px-6 py-1.5 lg:py-0 flex flex-wrap lg:flex-nowrap items-center justify-between gap-2 lg:gap-4">
       {/* Zone 1: Single-line Brand Wordmark */}
       <button
         type="button"
-        onClick={() => setActiveModule('resumes')}
-        className="font-ui text-lg font-bold tracking-tight text-slate-900 whitespace-nowrap shrink-0 cursor-pointer focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-900"
+        onClick={() => setActiveModule('profile')}
+        className="inline-flex items-center gap-2.5 font-ui text-base sm:text-lg font-bold tracking-tight text-slate-900 whitespace-nowrap shrink-0 cursor-pointer focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-900"
       >
-        Career Engine
+        <span
+          className="w-8 h-8 rounded-lg bg-[#121316] text-white inline-flex items-center justify-center shrink-0"
+          aria-hidden="true"
+        >
+          <CareerEngineIcon size={16} />
+        </span>
+        <span>Career Doc</span>
       </button>
 
       {/* Zone 2: Clean single-line text navigation links */}
-      <nav aria-label="Primary" className="flex items-center gap-5 overflow-x-auto">
+      <nav aria-label="Primary" className="order-3 lg:order-2 w-full lg:w-auto flex items-center gap-4 lg:gap-5 overflow-x-auto border-t lg:border-t-0 border-slate-100 pt-1 lg:pt-0">
         {NAV_ITEMS.map((item) => {
           const isActive = activeModule === item.id;
           return (
@@ -112,7 +137,7 @@ export function TopNav({ onOpenAiSettings }: { onOpenAiSettings: () => void }) {
               key={item.id}
               type="button"
               onClick={() => setActiveModule(item.id)}
-              className={`relative py-4 text-sm font-medium whitespace-nowrap shrink-0 transition-colors cursor-pointer focus-visible:outline-2 focus-visible:outline-slate-900 ${
+              className={`relative py-2 lg:py-4 text-xs sm:text-sm font-medium whitespace-nowrap shrink-0 transition-colors cursor-pointer focus-visible:outline-2 focus-visible:outline-slate-900 ${
                 isActive ? 'text-slate-900' : 'text-slate-500 hover:text-slate-900'
               }`}
             >
@@ -125,8 +150,8 @@ export function TopNav({ onOpenAiSettings }: { onOpenAiSettings: () => void }) {
         })}
       </nav>
 
-      {/* Zone 3: Active AI Provider, Auth, Sticky Notes & Primary Action */}
-      <div className="flex items-center gap-2.5 shrink-0">
+      {/* Zone 3: Active AI Provider, Auth / Guest, Reset, Sticky Notes & Primary Action */}
+      <div className="order-2 lg:order-3 flex flex-wrap items-center gap-2 shrink-0">
         {authMessage && (
           <span className="hidden md:inline text-[11px] text-rose-600 font-medium">
             {authMessage}
@@ -138,30 +163,58 @@ export function TopNav({ onOpenAiSettings }: { onOpenAiSettings: () => void }) {
           onClick={onOpenAiSettings}
           title={`AI Provider: ${providerDisplay.fullLabel} — Click to configure`}
           aria-label={`AI Provider settings (${providerDisplay.fullLabel})`}
-          className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium text-slate-700 bg-slate-50 border border-slate-300 rounded-md hover:bg-slate-100 hover:text-slate-900 transition-colors whitespace-nowrap shrink-0 cursor-pointer focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-900 max-w-[200px]"
+          className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium text-slate-700 bg-slate-50 border border-slate-300 rounded-md hover:bg-slate-100 hover:text-slate-900 transition-colors whitespace-nowrap shrink-0 cursor-pointer focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-900 max-w-[160px]"
         >
           <SlidersHorizontal className="w-3.5 h-3.5 text-slate-500 shrink-0" />
           <span className="truncate">{providerDisplay.fullLabel}</span>
         </button>
 
-        {!authLoading && !user && (
-          <button
-            type="button"
-            disabled={authBusy}
-            onClick={() => void handleGoogleSignIn()}
-            className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-slate-700 bg-white border border-slate-300 rounded-md hover:bg-slate-50 hover:text-slate-900 disabled:opacity-50 transition-colors whitespace-nowrap cursor-pointer focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-900"
-          >
-            {authBusy ? (
-              <Loader2 className="w-3.5 h-3.5 animate-spin" />
-            ) : (
-              <LogIn className="w-3.5 h-3.5" />
-            )}
-            <span>Sign in with Google</span>
-          </button>
+        <button
+          type="button"
+          onClick={onOpenWelcomeModal}
+          title="Open Welcome Guide"
+          className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium text-slate-700 bg-white border border-slate-300 rounded-md hover:bg-slate-50 hover:text-slate-900 transition-colors whitespace-nowrap shrink-0 cursor-pointer focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-900"
+        >
+          <BookOpen className="w-3.5 h-3.5 text-slate-500 shrink-0" />
+          <span className="hidden xl:inline">Welcome Guide</span>
+        </button>
+
+        {!authLoading && !user && isGuest && (
+          <div className="flex items-center gap-1.5 border border-amber-200 rounded-md px-2.5 py-1 bg-amber-50/70 shrink-0">
+            <span
+              title="Guest mode saves data only in this browser and is not linked to a Google account."
+              className="text-[11px] font-semibold text-amber-900 whitespace-nowrap"
+            >
+              Guest (Local)
+            </span>
+            <button
+              type="button"
+              disabled={authBusy}
+              onClick={() => void handleGoogleSignIn()}
+              title="Sign in with Google to use your personal cloud account"
+              className="inline-flex items-center gap-1 text-xs font-medium text-slate-700 hover:text-slate-900 disabled:opacity-50 cursor-pointer pl-1.5 border-l border-amber-200 whitespace-nowrap shrink-0"
+            >
+              {authBusy ? (
+                <Loader2 className="w-3 h-3 animate-spin shrink-0" />
+              ) : (
+                <LogIn className="w-3 h-3 shrink-0" />
+              )}
+              <span>Sign in</span>
+            </button>
+            <button
+              type="button"
+              onClick={exitGuestMode}
+              title="Leave Guest mode and return to start screen"
+              className="inline-flex items-center gap-1 text-xs font-medium text-slate-600 hover:text-slate-900 cursor-pointer pl-1.5 border-l border-amber-200 whitespace-nowrap shrink-0"
+            >
+              <UserX className="w-3 h-3 shrink-0" />
+              <span className="hidden sm:inline">Exit</span>
+            </button>
+          </div>
         )}
 
         {!authLoading && user && (
-          <div className="flex items-center gap-2 border border-slate-200 rounded-md px-2.5 py-1 bg-slate-50">
+          <div className="flex items-center gap-2 border border-slate-200 rounded-md px-2.5 py-1 bg-slate-50 shrink-0">
             <span
               title={
                 syncStatus === 'syncing'
@@ -170,7 +223,7 @@ export function TopNav({ onOpenAiSettings }: { onOpenAiSettings: () => void }) {
                     ? 'Firestore sync error'
                     : 'Synced with Firestore'
               }
-              className="inline-flex items-center"
+              className="inline-flex items-center shrink-0"
             >
               {syncStatus === 'syncing' ? (
                 <Loader2 className="w-3.5 h-3.5 text-slate-500 animate-spin" />
@@ -180,7 +233,7 @@ export function TopNav({ onOpenAiSettings }: { onOpenAiSettings: () => void }) {
                 <Cloud className="w-3.5 h-3.5 text-emerald-600" />
               )}
             </span>
-            <span className="hidden xl:inline text-xs font-medium text-slate-700 max-w-[140px] truncate">
+            <span className="hidden xl:inline text-xs font-medium text-slate-700 max-w-[130px] truncate">
               {user.email || user.displayName || 'Signed in'}
             </span>
             <button
@@ -188,20 +241,31 @@ export function TopNav({ onOpenAiSettings }: { onOpenAiSettings: () => void }) {
               disabled={authBusy}
               onClick={() => void handleSignOut()}
               title="Sign out"
-              className="inline-flex items-center gap-1 text-xs font-medium text-slate-500 hover:text-slate-900 disabled:opacity-50 cursor-pointer pl-1 border-l border-slate-200"
+              className="inline-flex items-center gap-1 text-xs font-medium text-slate-600 hover:text-slate-900 disabled:opacity-50 cursor-pointer pl-1.5 border-l border-slate-200 whitespace-nowrap shrink-0"
             >
-              <LogOut className="w-3.5 h-3.5" />
-              <span className="hidden 2xl:inline">Sign out</span>
+              <LogOut className="w-3.5 h-3.5 shrink-0" />
+              <span className="hidden md:inline">Sign out</span>
             </button>
           </div>
         )}
 
         <button
           type="button"
+          onClick={onOpenResetModal}
+          title="Clear workspace data and start fresh"
+          aria-label="Reset workspace data"
+          className="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-medium text-slate-600 bg-white border border-slate-300 rounded-md hover:bg-rose-50 hover:text-rose-700 hover:border-rose-200 transition-colors whitespace-nowrap shrink-0 cursor-pointer focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-900"
+        >
+          <RotateCcw className="w-3.5 h-3.5 shrink-0" />
+          <span className="hidden xl:inline">Reset</span>
+        </button>
+
+        <button
+          type="button"
           onClick={openStickyNotes}
           title="Sticky Notes (Alt+S)"
           aria-pressed={isStickyNotesOpen && !isStickyNotesMinimized}
-          className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-md border transition-colors whitespace-nowrap shrink-0 cursor-pointer focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-900 ${
+          className={`inline-flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 text-xs font-medium rounded-md border transition-colors whitespace-nowrap shrink-0 cursor-pointer focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-900 ${
             isStickyNotesOpen && !isStickyNotesMinimized
               ? 'bg-slate-900 text-white border-slate-900'
               : 'bg-white text-slate-700 border-slate-300 hover:bg-slate-50 hover:text-slate-900'
@@ -211,13 +275,13 @@ export function TopNav({ onOpenAiSettings }: { onOpenAiSettings: () => void }) {
             <rect x="3" y="3" width="18" height="18" rx="4" fill="#FCD116" />
             <path d="M14 21L21 14H15.5C14.6716 14 14 14.6716 14 15.5V21Z" fill="#9B4F96" />
           </svg>
-          <span>Sticky Notes</span>
+          <span className="hidden sm:inline">Sticky Notes</span>
         </button>
 
         <button
           type="button"
           onClick={handlePrimaryAction}
-          className="px-4 py-2 text-xs font-semibold text-white bg-slate-900 rounded-md hover:bg-slate-800 transition-colors whitespace-nowrap shrink-0 cursor-pointer focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-900"
+          className="px-3 sm:px-4 py-2 text-xs font-semibold text-white bg-slate-900 rounded-md hover:bg-slate-800 transition-colors whitespace-nowrap shrink-0 cursor-pointer focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-900"
         >
           {primaryLabel}
         </button>

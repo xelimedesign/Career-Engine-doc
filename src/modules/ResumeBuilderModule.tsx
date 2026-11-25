@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
   ArrowDown,
   ArrowUp,
@@ -74,6 +74,8 @@ export function ResumeBuilderModule() {
     setSelectedJobId,
     setActiveModule,
     openReviewCenter,
+    tailorLaunchRequest,
+    clearTailorLaunchRequest,
     documentSnapshots,
     recordDocumentSnapshot,
     undoLatestSnapshotForDocument,
@@ -112,16 +114,85 @@ export function ResumeBuilderModule() {
     return evaluateResumeStandards(activeResume, linkedJobForScore, pageCount);
   }, [activeResume, linkedJobForScore, pageCount]);
 
+  useEffect(() => {
+    if (!tailorLaunchRequest || !activeResume) return;
+    if (tailorLaunchRequest.resumeId !== activeResume.id) return;
+    clearTailorLaunchRequest();
+    setCenterTab('ai');
+
+    const jobTarget = jobs.find((j) => j.id === tailorLaunchRequest.jobId);
+    const jobResearch = jobTarget ? getCompanyResearchForJob(jobTarget.id) : undefined;
+    const jobMatchObj = jobTarget ? getJobMatchForJob(jobTarget.id) : undefined;
+
+    setAiError(null);
+    setAiLoading(true);
+    assistResumeWithAi({
+      action: 'tailor_to_job',
+      resume: activeResume,
+      careerProfile: profile,
+      targetJob: jobTarget,
+      companyResearch: jobResearch,
+      jobMatch: jobMatchObj,
+    })
+      .then((res) => {
+        const expFlags: Record<string, boolean> = {};
+        res.experienceUpdates.forEach((eu) => {
+          expFlags[eu.id] = true;
+        });
+        setApplyExpChecks(expFlags);
+        setApplySummaryCheck(Boolean(res.proposedHeadline || res.proposedSummary));
+        setApplySkillsCheck(res.suggestedSkillsToHighlight.length > 0);
+        setAiProposal(res);
+      })
+      .catch((err) => {
+        setAiError(err instanceof Error ? err.message : 'AI tailoring request failed.');
+      })
+      .finally(() => {
+        setAiLoading(false);
+      });
+  }, [
+    activeResume,
+    clearTailorLaunchRequest,
+    getCompanyResearchForJob,
+    getJobMatchForJob,
+    jobs,
+    profile,
+    tailorLaunchRequest,
+  ]);
+
   if (!activeResume) {
     return (
-      <div className="p-12 text-center">
-        <button
-          type="button"
-          onClick={() => createResume({ fromProfile: true })}
-          className="px-4 py-2 text-xs font-semibold text-white bg-slate-900 rounded-md cursor-pointer"
-        >
-          Create First Resume
-        </button>
+      <div className="max-w-2xl mx-auto my-12 bg-white border border-slate-200 rounded-lg p-10 text-center space-y-4">
+        <div className="space-y-1.5">
+          <h2 className="text-base font-semibold text-slate-900">No resumes created yet</h2>
+          <p className="text-xs text-slate-500 leading-relaxed max-w-md mx-auto">
+            Create your Master Resume seeded from your Career Profile, start a blank resume from scratch, or fill out your profile details first.
+          </p>
+        </div>
+        <div className="flex flex-wrap items-center justify-center gap-2">
+          <button
+            type="button"
+            onClick={() => createResume({ name: 'Master Resume', fromProfile: true })}
+            className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-semibold text-white bg-slate-900 hover:bg-slate-800 rounded-md cursor-pointer"
+          >
+            <Plus className="w-3.5 h-3.5" />
+            Create Master Resume (From Profile)
+          </button>
+          <button
+            type="button"
+            onClick={() => createResume({ name: 'Blank Resume', fromProfile: false })}
+            className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-semibold text-slate-800 bg-white border border-slate-300 hover:bg-slate-50 rounded-md cursor-pointer"
+          >
+            Create Blank Resume
+          </button>
+          <button
+            type="button"
+            onClick={() => setActiveModule('profile')}
+            className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-medium text-slate-600 hover:text-slate-900 cursor-pointer"
+          >
+            Open Career Profile
+          </button>
+        </div>
       </div>
     );
   }
@@ -168,6 +239,7 @@ export function ResumeBuilderModule() {
       const res = await assistResumeWithAi({
         action,
         resume: activeResume,
+        careerProfile: profile,
         targetJob: linkedJob,
         experienceId,
         companyResearch: linkedResearch,
@@ -284,7 +356,7 @@ export function ResumeBuilderModule() {
   };
 
   return (
-    <div className="flex flex-col h-[calc(100vh-3.5rem)] overflow-hidden">
+    <div className="flex flex-col flex-1 min-h-0 overflow-hidden">
       {/* Mobile Panel Switcher */}
       <div className="lg:hidden flex items-center border-b border-slate-200 bg-white px-4 py-2 gap-2 shrink-0">
         {(['left', 'center', 'right'] as const).map((p) => (
@@ -371,9 +443,8 @@ export function ResumeBuilderModule() {
               </button>
               <button
                 type="button"
-                disabled={resumes.length <= 1}
                 onClick={() => deleteResume(activeResume.id)}
-                className="inline-flex items-center justify-center gap-1 px-2.5 py-1.5 text-[11px] font-medium text-slate-600 bg-slate-100 hover:bg-rose-50 hover:text-rose-700 disabled:opacity-40 rounded cursor-pointer"
+                className="inline-flex items-center justify-center gap-1 px-2.5 py-1.5 text-[11px] font-medium text-slate-600 bg-slate-100 hover:bg-rose-50 hover:text-rose-700 rounded cursor-pointer"
                 aria-label="Delete active resume"
               >
                 <Trash2 className="w-3 h-3" />
@@ -1049,6 +1120,16 @@ export function ResumeBuilderModule() {
                             active findings
                           </span>
                         </div>
+                        {linkedResearch.overview && (
+                          <p className="text-slate-600 leading-relaxed">
+                            <strong>Overview:</strong> {linkedResearch.overview}
+                          </p>
+                        )}
+                        {linkedResearch.coreFocus && linkedResearch.coreFocus.length > 0 && (
+                          <p className="text-slate-600 leading-relaxed">
+                            <strong>Core Focus:</strong> {linkedResearch.coreFocus.join(' · ')}
+                          </p>
+                        )}
                         {linkedResearch.report.technology && (
                           <p className="text-slate-600 leading-relaxed">
                             <strong>Tech &amp; Tools:</strong> {linkedResearch.report.technology}
@@ -1124,7 +1205,7 @@ export function ResumeBuilderModule() {
                       AI Writing Assistant
                     </h3>
                     <p className="text-xs text-slate-500 mt-0.5">
-                      Grounded strictly in your verified history. All suggestions open in a review panel before any changes are applied.
+                      Grounded strictly in your verified history. All suggestions open in a review panel before any changes are applied. AI drafts are advisory — review and verify details before sending.
                     </p>
                   </div>
 

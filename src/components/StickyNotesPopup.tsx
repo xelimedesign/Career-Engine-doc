@@ -16,6 +16,11 @@ import {
   StickyNoteThemeId,
 } from '../types/career';
 import { StickyNoteBannerSvg } from './StickyNoteBanners';
+import {
+  extractPlainTextFromHtml,
+  isSafeDataImageUrl,
+  sanitizeRichHtml,
+} from '../utils/urlSafety';
 
 type DetailTarget =
   | { kind: 'note'; id: string }
@@ -55,13 +60,7 @@ const TASK_FULL_LABELS: Record<JobTaskType, string> = {
 };
 
 function stripHtml(html: string): string {
-  if (!html) return '';
-  if (typeof document === 'undefined') {
-    return html.replace(/<[^>]+>/g, ' ').trim();
-  }
-  const tmp = document.createElement('div');
-  tmp.innerHTML = html;
-  return tmp.textContent || tmp.innerText || '';
+  return extractPlainTextFromHtml(html);
 }
 
 function escapeHtml(str: string): string {
@@ -84,6 +83,105 @@ function getDisplayJobStatus(job: JobApplication): JobIntakeStatus {
   return job.jobDescription?.trim() ? 'ready_for_tailoring' : 'needs_manual_input';
 }
 
+interface TornNoteItem {
+  id: string;
+  kind: 'note' | 'job';
+  targetId: string;
+  x: number;
+  y: number;
+}
+
+function TornNoteCard({
+  torn,
+  theme,
+  title,
+  content,
+  onMove,
+  onChangeTheme,
+  onChangeContent,
+  onDockBack,
+}: {
+  torn: TornNoteItem;
+  theme: { id: string; name: string; accent: string; bg: string };
+  title: string;
+  content: string;
+  onMove: (x: number, y: number) => void;
+  onChangeTheme: (theme: StickyNoteThemeId) => void;
+  onChangeContent: (text: string) => void;
+  onDockBack: () => void;
+}) {
+  const [isDragging, setIsDragging] = useState(false);
+  const dragOffsetRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
+
+  return (
+    <div
+      style={{ left: `${torn.x}px`, top: `${torn.y}px` }}
+      className="fixed z-[9997] w-[310px] min-h-[260px] bg-[#333333] border border-[#444444] rounded-[10px] shadow-[0_22px_54px_rgba(0,0,0,0.72)] flex flex-col overflow-hidden text-gray-100 group animate-in fade-in duration-150"
+    >
+      {/* Top draggable accent strip */}
+      <div
+        style={{ backgroundColor: theme.accent }}
+        onPointerDown={(e) => {
+          if ((e.target as HTMLElement).closest('button')) return;
+          setIsDragging(true);
+          dragOffsetRef.current = {
+            x: e.clientX - torn.x,
+            y: e.clientY - torn.y,
+          };
+          (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+        }}
+        onPointerMove={(e) => {
+          if (!isDragging) return;
+          const nx = Math.max(8, Math.min(window.innerWidth - 318, e.clientX - dragOffsetRef.current.x));
+          const ny = Math.max(8, Math.min(window.innerHeight - 268, e.clientY - dragOffsetRef.current.y));
+          onMove(nx, ny);
+        }}
+        onPointerUp={(e) => {
+          if (!isDragging) return;
+          setIsDragging(false);
+          try {
+            (e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId);
+          } catch {}
+        }}
+        className="h-2.5 hover:h-6 w-full cursor-grab active:cursor-grabbing select-none flex items-center justify-end px-2 transition-all duration-150 shrink-0"
+      >
+        <div className="opacity-0 group-hover:opacity-100 flex items-center gap-1.5 bg-black/45 px-2 py-0.5 rounded-full transition-opacity pointer-events-auto">
+          {Object.values(STICKY_NOTE_THEMES).map((t) => (
+            <button
+              key={t.id}
+              type="button"
+              onClick={() => onChangeTheme(t.id)}
+              title={t.name}
+              style={{ backgroundColor: t.accent }}
+              className={`w-2.5 h-2.5 rounded-full border border-black/40 hover:scale-125 transition-transform cursor-pointer ${
+                theme.id === t.id ? 'ring-1 ring-white' : ''
+              }`}
+            />
+          ))}
+          <button
+            type="button"
+            onClick={onDockBack}
+            title="Dock back into list"
+            className="text-white hover:text-red-300 text-xs ml-1 px-0.5 cursor-pointer leading-none"
+          >
+            ×
+          </button>
+        </div>
+      </div>
+
+      <div className="p-4 flex-1 flex flex-col">
+        <h3 className="text-xs font-semibold text-white/80 mb-1.5 truncate">{title}</h3>
+        <textarea
+          value={content}
+          onChange={(e) => onChangeContent(e.target.value)}
+          placeholder="Take a note..."
+          className="flex-1 w-full bg-transparent text-[13.5px] leading-relaxed text-gray-100 placeholder-white/40 outline-none resize-none font-sans"
+        />
+      </div>
+    </div>
+  );
+}
+
 export function StickyNotesPopup() {
   const {
     jobs,
@@ -97,7 +195,7 @@ export function StickyNotesPopup() {
     updateStickyNote,
     deleteStickyNote,
     addStickyCategory,
-    resetDemoStickyNotes,
+    clearStickyNotes,
     isStickyNotesOpen,
     isStickyNotesMinimized,
     openStickyNotes,
@@ -114,6 +212,12 @@ export function StickyNotesPopup() {
   const [menuOpen, setMenuOpen] = useState(false);
   const [addingCategory, setAddingCategory] = useState(false);
   const [newCategoryName, setNewCategoryName] = useState('');
+
+  useEffect(() => {
+    if (activeCategory.toLowerCase() === 'sports') {
+      setActiveCategory('All');
+    }
+  }, [activeCategory]);
 
   // Composer state
   const [composerOpen, setComposerOpen] = useState(false);
@@ -154,6 +258,188 @@ export function StickyNotesPopup() {
   const detailRichEditorRef = useRef<HTMLDivElement | null>(null);
   const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const saveLabelTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Floating Window Dragging & Position
+  const [windowPos, setWindowPos] = useState<{ x: number; y: number } | null>(null);
+  const [isWindowDragging, setIsWindowDragging] = useState(false);
+  const [edgeActive, setEdgeActive] = useState(false);
+  const winDragOffsetRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
+
+  // Minimized Pill Dragging & Position
+  const [pillPos, setPillPos] = useState<{ right: number; bottom: number }>({ right: 24, bottom: 24 });
+  const pillDragRef = useRef<{
+    startX: number;
+    startY: number;
+    origRight: number;
+    origBottom: number;
+    moved: boolean;
+  } | null>(null);
+
+  // Peeled-out Single Note Cards
+  const [tornNotes, setTornNotes] = useState<TornNoteItem[]>([]);
+  const [cardDrag, setCardDrag] = useState<{
+    kind: 'job' | 'note';
+    id: string;
+    title: string;
+    body: string;
+    theme: StickyNoteThemeId;
+    startX: number;
+    startY: number;
+    currentX: number;
+    currentY: number;
+    active: boolean;
+  } | null>(null);
+  const suppressCardClickRef = useRef(false);
+
+  // Card drag event listeners on window
+  useEffect(() => {
+    if (!cardDrag) return;
+
+    const handlePointerMove = (e: PointerEvent) => {
+      const dist = Math.hypot(e.clientX - cardDrag.startX, e.clientY - cardDrag.startY);
+      if (!cardDrag.active && dist > 10) {
+        suppressCardClickRef.current = true;
+        setCardDrag((prev) =>
+          prev ? { ...prev, active: true, currentX: e.clientX, currentY: e.clientY } : null
+        );
+      } else if (cardDrag.active) {
+        setCardDrag((prev) =>
+          prev ? { ...prev, currentX: e.clientX, currentY: e.clientY } : null
+        );
+      }
+    };
+
+    const handlePointerUp = (e: PointerEvent) => {
+      if (cardDrag.active) {
+        const winRect = windowRef.current?.getBoundingClientRect();
+        const droppedOutside =
+          !winRect ||
+          e.clientX < winRect.left - 16 ||
+          e.clientX > winRect.right + 16 ||
+          e.clientY < winRect.top - 16 ||
+          e.clientY > winRect.bottom + 16;
+
+        if (droppedOutside) {
+          const spawnX = Math.max(16, Math.min(window.innerWidth - 325, e.clientX - 150));
+          const spawnY = Math.max(16, Math.min(window.innerHeight - 280, e.clientY - 20));
+          setTornNotes((prev) => {
+            const filtered = prev.filter(
+              (t) => !(t.kind === cardDrag.kind && t.targetId === cardDrag.id)
+            );
+            return [
+              ...filtered,
+              {
+                id: `torn-${cardDrag.kind}-${cardDrag.id}`,
+                kind: cardDrag.kind,
+                targetId: cardDrag.id,
+                x: spawnX,
+                y: spawnY,
+              },
+            ];
+          });
+          showToast('Peeled out sticky note onto workspace');
+        }
+      }
+      setTimeout(() => {
+        suppressCardClickRef.current = false;
+      }, 60);
+      setCardDrag(null);
+    };
+
+    window.addEventListener('pointermove', handlePointerMove);
+    window.addEventListener('pointerup', handlePointerUp);
+    return () => {
+      window.removeEventListener('pointermove', handlePointerMove);
+      window.removeEventListener('pointerup', handlePointerUp);
+    };
+  }, [cardDrag]);
+
+  // Title bar drag handlers
+  const handleHeaderPointerDown = (e: React.PointerEvent<HTMLElement>) => {
+    if ((e.target as HTMLElement).closest('button, input, select, textarea, [data-prevent-drag]')) return;
+    if (!windowRef.current) return;
+    const rect = windowRef.current.getBoundingClientRect();
+    winDragOffsetRef.current = {
+      x: e.clientX - rect.left,
+      y: e.clientY - rect.top,
+    };
+    setIsWindowDragging(true);
+    e.currentTarget.setPointerCapture(e.pointerId);
+  };
+
+  const handleHeaderPointerMove = (e: React.PointerEvent<HTMLElement>) => {
+    if (!isWindowDragging) return;
+    const newLeft = e.clientX - winDragOffsetRef.current.x;
+    const newTop = e.clientY - winDragOffsetRef.current.y;
+    const clampedLeft = Math.max(-40, Math.min(window.innerWidth - 360, newLeft));
+    const clampedTop = Math.max(10, Math.min(window.innerHeight - 80, newTop));
+    setWindowPos({ x: clampedLeft, y: clampedTop });
+
+    const edgeThreshold = 22;
+    const atEdge =
+      e.clientX <= edgeThreshold ||
+      e.clientX >= window.innerWidth - edgeThreshold ||
+      e.clientY <= edgeThreshold ||
+      e.clientY >= window.innerHeight - edgeThreshold;
+    setEdgeActive(atEdge);
+  };
+
+  const handleHeaderPointerUp = (e: React.PointerEvent<HTMLElement>) => {
+    if (!isWindowDragging) return;
+    setIsWindowDragging(false);
+    setEdgeActive(false);
+    try {
+      e.currentTarget.releasePointerCapture(e.pointerId);
+    } catch {}
+  };
+
+  // Minimized pill pointer handlers
+  const handlePillPointerDown = (e: React.PointerEvent<HTMLButtonElement>) => {
+    pillDragRef.current = {
+      startX: e.clientX,
+      startY: e.clientY,
+      origRight: pillPos.right,
+      origBottom: pillPos.bottom,
+      moved: false,
+    };
+    e.currentTarget.setPointerCapture(e.pointerId);
+  };
+
+  const handlePillPointerMove = (e: React.PointerEvent<HTMLButtonElement>) => {
+    if (!pillDragRef.current) return;
+    const dx = e.clientX - pillDragRef.current.startX;
+    const dy = e.clientY - pillDragRef.current.startY;
+    const dist = Math.hypot(dx, dy);
+    if (dist > 6) pillDragRef.current.moved = true;
+
+    const newRight = Math.max(12, Math.min(window.innerWidth - 160, pillDragRef.current.origRight - dx));
+    const newBottom = Math.max(12, Math.min(window.innerHeight - 52, pillDragRef.current.origBottom - dy));
+    setPillPos({ right: newRight, bottom: newBottom });
+
+    if (dist > 85) {
+      pillDragRef.current = null;
+      try {
+        e.currentTarget.releasePointerCapture(e.pointerId);
+      } catch {}
+      const targetLeft = Math.max(16, Math.min(window.innerWidth - 420, e.clientX - 180));
+      const targetTop = Math.max(16, Math.min(window.innerHeight - 560, e.clientY - 24));
+      setWindowPos({ x: targetLeft, y: targetTop });
+      restoreStickyNotes();
+      showToast('Expanded Sticky Notes from pill');
+    }
+  };
+
+  const handlePillPointerUp = (e: React.PointerEvent<HTMLButtonElement>) => {
+    if (!pillDragRef.current) return;
+    const wasMoved = pillDragRef.current.moved;
+    pillDragRef.current = null;
+    try {
+      e.currentTarget.releasePointerCapture(e.pointerId);
+    } catch {}
+    if (!wasMoved) {
+      restoreStickyNotes();
+    }
+  };
 
   const showToast = (msg: string) => {
     setToastMessage(msg);
@@ -308,8 +594,9 @@ export function StickyNotesPopup() {
       activeDetailNote &&
       detailRichEditorRef.current
     ) {
-      if (detailRichEditorRef.current.innerHTML !== activeDetailNote.body) {
-        detailRichEditorRef.current.innerHTML = activeDetailNote.body || '';
+      const safeBody = sanitizeRichHtml(activeDetailNote.body || '');
+      if (detailRichEditorRef.current.innerHTML !== safeBody) {
+        detailRichEditorRef.current.innerHTML = safeBody;
       }
     }
   }, [
@@ -414,6 +701,11 @@ export function StickyNotesPopup() {
     reader.onload = (ev) => {
       const result = typeof ev.target?.result === 'string' ? ev.target.result : null;
       if (result) {
+        if (!isSafeDataImageUrl(result)) {
+          setComposerError('Only PNG, JPEG, GIF, or WebP images are supported.');
+          showToast('Unsupported image format');
+          return;
+        }
         if (result.length > 780000) {
           setComposerError('Attached image is too large (max ~550KB). Choose a smaller image.');
           showToast('Image too large — max ~550KB for cloud sync');
@@ -545,19 +837,22 @@ export function StickyNotesPopup() {
     showToast(`Added "${added}" tab`);
   };
 
-  const handleResetDemoNotes = () => {
+  const handleClearNotes = () => {
     setMenuOpen(false);
-    resetDemoStickyNotes();
+    clearStickyNotes();
     setActiveCategory('All');
     setDetailTarget(null);
-    showToast('Restored default demo notes & tabs');
+    showToast('Cleared sticky notes & reset tabs');
   };
 
   const handleFormatDoc = (cmd: string) => {
     if (!detailRichEditorRef.current || !activeDetailNote) return;
     detailRichEditorRef.current.focus();
     document.execCommand(cmd, false, undefined);
-    const updatedHtml = detailRichEditorRef.current.innerHTML;
+    const updatedHtml = sanitizeRichHtml(detailRichEditorRef.current.innerHTML);
+    if (detailRichEditorRef.current.innerHTML !== updatedHtml) {
+      detailRichEditorRef.current.innerHTML = updatedHtml;
+    }
     updateStickyNote(activeDetailNote.id, (prev) => ({
       ...prev,
       body: updatedHtml,
@@ -597,28 +892,6 @@ export function StickyNotesPopup() {
     }
   };
 
-  if (!isStickyNotesOpen) {
-    return null;
-  }
-
-  // Minimized state: render only non-blocking restore pill
-  if (isStickyNotesMinimized) {
-    return (
-      <button
-        type="button"
-        onClick={restoreStickyNotes}
-        aria-label="Restore Sticky Notes"
-        className="fixed bottom-6 right-6 z-50 flex items-center gap-3 px-4 py-2.5 rounded-full bg-[#242424] border border-[#3d3d3d] shadow-2xl hover:bg-[#2f2f2f] transition-all duration-200 cursor-pointer"
-      >
-        <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
-          <rect x="3" y="3" width="18" height="18" rx="4" fill="#FCD116" />
-          <path d="M14 21L21 14H15.5C14.6716 14 14 14.6716 14 15.5V21Z" fill="#9B4F96" />
-        </svg>
-        <span className="text-sm font-medium text-gray-100">Sticky Notes</span>
-      </button>
-    );
-  }
-
   const isJobsComposer = composerCategory.toLowerCase() === 'jobs';
 
   const activeDetailTheme = activeDetailJob
@@ -626,6 +899,10 @@ export function StickyNotesPopup() {
     : activeDetailNote
       ? STICKY_NOTE_THEMES[activeDetailNote.theme] || STICKY_NOTE_THEMES.purple
       : STICKY_NOTE_THEMES.purple;
+
+  if (!isStickyNotesOpen && tornNotes.length === 0) {
+    return null;
+  }
 
   const handleToggleTaskMenu = () => {
     if (taskMenuOpen) {
@@ -693,45 +970,121 @@ export function StickyNotesPopup() {
   );
 
   return (
-    <div
-      className="fixed inset-0 z-50 bg-black/35 backdrop-blur-[1px] flex items-center justify-center p-0 min-[480px]:p-6"
-      role="presentation"
-    >
-      <main
-        ref={windowRef}
-        role="dialog"
-        aria-modal="true"
-        aria-label="Sticky Notes"
-        className="relative w-full max-w-full min-[480px]:max-w-[404px] h-full min-[480px]:h-[88vh] min-[480px]:max-h-[840px] min-[480px]:min-h-[580px] bg-[#202020] border border-[#353535] rounded-none min-[480px]:rounded-[12px] shadow-[0_24px_64px_rgba(0,0,0,0.68),0_0_0_1px_rgba(255,255,255,0.04)] flex flex-col overflow-hidden text-white font-sans"
+    <>
+      {/* Viewport Edge Tear-Out Drop Zone Guide */}
+      <div
+        className={`fixed inset-0 pointer-events-none z-[9990] border-4 border-dashed border-[#c58af9]/85 bg-radial from-transparent to-[#c58af9]/15 transition-opacity duration-150 ${
+          edgeActive ? 'opacity-100' : 'opacity-0'
+        }`}
       >
-        {/* 1. Windows 11 Title Bar */}
-        <header className="h-11 px-3.5 flex items-center justify-between select-none shrink-0 bg-[#202020]">
-          <div className="flex items-center gap-2.5">
-            <div className="w-5 h-5 flex items-center justify-center">
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
-                <defs>
-                  <linearGradient id="snWinYellow" x1="2" y1="2" x2="20" y2="20" gradientUnits="userSpaceOnUse">
-                    <stop offset="0%" stopColor="#FFE054" />
-                    <stop offset="100%" stopColor="#F5B800" />
-                  </linearGradient>
-                  <linearGradient id="snWinPurple" x1="13" y1="13" x2="21" y2="21" gradientUnits="userSpaceOnUse">
-                    <stop offset="0%" stopColor="#A855F7" />
-                    <stop offset="100%" stopColor="#6B21A8" />
-                  </linearGradient>
-                </defs>
-                <path
-                  d="M3 5.5C3 4.11929 4.11929 3 5.5 3H18.5C19.8807 3 21 4.11929 21 5.5V14L14 21H5.5C4.11929 21 3 19.8807 3 18.5V5.5Z"
-                  fill="url(#snWinYellow)"
-                />
-                <path d="M14 21L21 14H16C14.8954 14 14 14.8954 14 16V21Z" fill="url(#snWinPurple)" />
-              </svg>
-            </div>
-            <span className="text-[13px] font-normal text-[#e6e6e6] tracking-[-0.01em]">
-              Sticky Notes
-            </span>
-          </div>
+        <div className="fixed top-3.5 left-1/2 -translate-x-1/2 bg-[#c58af9] text-[#1c1326] text-xs font-bold px-3.5 py-1.5 rounded-full shadow-2xl pointer-events-none">
+          Release at edge to detach into the workspace
+        </div>
+      </div>
 
-          <div className="flex items-center">
+      {/* Drag Ghost Card */}
+      {cardDrag?.active && (
+        <div
+          style={{
+            left: `${cardDrag.currentX - 130}px`,
+            top: `${cardDrag.currentY - 24}px`,
+            transform: 'rotate(-1.5deg)',
+          }}
+          className="fixed z-[10000] w-[260px] pointer-events-none bg-[#333333] border border-[#4a4a4a] rounded-[10px] overflow-hidden text-gray-100 shadow-[0_20px_44px_rgba(0,0,0,0.65)]"
+        >
+          <div
+            style={{
+              backgroundColor: (STICKY_NOTE_THEMES[cardDrag.theme] || STICKY_NOTE_THEMES.green).accent,
+            }}
+            className="h-2 w-full"
+          />
+          <div className="p-3">
+            <div className="text-[12.5px] leading-snug line-clamp-3 text-gray-200">
+              {stripHtml(cardDrag.body || cardDrag.title || 'Sticky Note')}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Draggable Minimized Pill */}
+      {isStickyNotesMinimized && (
+        <button
+          type="button"
+          onPointerDown={handlePillPointerDown}
+          onPointerMove={handlePillPointerMove}
+          onPointerUp={handlePillPointerUp}
+          style={{
+            right: `${pillPos.right}px`,
+            bottom: `${pillPos.bottom}px`,
+          }}
+          aria-label="Restore Sticky Notes"
+          title="Click or drag inward to pull out Sticky Notes"
+          className="fixed z-[9999] flex items-center gap-2.5 px-4 py-2.5 rounded-full bg-[#242424] border border-[#424242] shadow-[0_16px_36px_rgba(0,0,0,0.6)] hover:bg-[#2f2f2f] hover:border-[#c58af9] transition-colors cursor-grab active:cursor-grabbing select-none"
+        >
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
+            <rect x="3" y="3" width="18" height="18" rx="4" fill="#FCD116" />
+            <path d="M14 21L21 14H15.5C14.67 14 14 14.67 14 15.5V21Z" fill="#9B4F96" />
+          </svg>
+          <span className="text-[13.5px] font-medium text-gray-100">Sticky Notes</span>
+          <span className="text-[11px] text-zinc-400">↖ drag</span>
+        </button>
+      )}
+
+      {/* Main Draggable Floating Sticky Notes Window */}
+      {isStickyNotesOpen && !isStickyNotesMinimized && (
+        <aside
+          ref={windowRef}
+          role="dialog"
+          aria-modal="false"
+          aria-label="Sticky Notes"
+          style={
+            windowPos
+              ? { left: `${windowPos.x}px`, top: `${windowPos.y}px` }
+              : { right: '24px', top: '72px' }
+          }
+          className={`fixed z-[9998] w-[396px] max-w-[calc(100vw-24px)] h-[82vh] max-h-[820px] min-h-[520px] bg-[#202020] border border-[#363636] rounded-[12px] shadow-[0_24px_64px_rgba(0,0,0,0.72),0_0_0_1px_rgba(255,255,255,0.05)] flex flex-col overflow-hidden text-white font-sans transition-shadow duration-150 ${
+            isWindowDragging
+              ? 'select-none shadow-[0_32px_80px_rgba(0,0,0,0.85),0_0_0_1.5px_#c58af9]'
+              : ''
+          }`}
+        >
+          {/* 1. Windows 11 Title Bar (Draggable) */}
+          <header
+            onPointerDown={handleHeaderPointerDown}
+            onPointerMove={handleHeaderPointerMove}
+            onPointerUp={handleHeaderPointerUp}
+            className="h-11 px-3.5 flex items-center justify-between select-none shrink-0 bg-[#202020] cursor-grab active:cursor-grabbing border-b border-white/[0.04]"
+          >
+            <div className="flex items-center gap-2.5 pointer-events-none">
+              <div className="w-5 h-5 flex items-center justify-center">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
+                  <defs>
+                    <linearGradient id="snWinYellow" x1="2" y1="2" x2="20" y2="20" gradientUnits="userSpaceOnUse">
+                      <stop offset="0%" stopColor="#FFE054" />
+                      <stop offset="100%" stopColor="#F5B800" />
+                    </linearGradient>
+                    <linearGradient id="snWinPurple" x1="13" y1="13" x2="21" y2="21" gradientUnits="userSpaceOnUse">
+                      <stop offset="0%" stopColor="#A855F7" />
+                      <stop offset="100%" stopColor="#6B21A8" />
+                    </linearGradient>
+                  </defs>
+                  <path
+                    d="M3 5.5C3 4.11929 4.11929 3 5.5 3H18.5C19.8807 3 21 4.11929 21 5.5V14L14 21H5.5C4.11929 21 3 19.8807 3 18.5V5.5Z"
+                    fill="url(#snWinYellow)"
+                  />
+                  <path d="M14 21L21 14H16C14.8954 14 14 14.8954 14 16V21Z" fill="url(#snWinPurple)" />
+                </svg>
+              </div>
+              <span className="text-[13px] font-normal text-[#e6e6e6] tracking-[-0.01em]">
+                Sticky Notes
+              </span>
+              <span
+                className="w-1.5 h-1.5 rounded-full bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.7)]"
+                title="Synced across windows"
+              />
+            </div>
+
+            <div className="flex items-center" data-prevent-drag>
             <div className="relative" ref={menuRef}>
               <button
                 type="button"
@@ -773,14 +1126,14 @@ export function StickyNotesPopup() {
                   <div className="my-1 border-t border-white/10" />
                   <button
                     type="button"
-                    onClick={handleResetDemoNotes}
+                    onClick={handleClearNotes}
                     className="w-full px-3.5 py-2 text-left hover:bg-white/[0.08] text-purple-300 flex items-center gap-2.5 cursor-pointer"
                   >
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                       <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
                       <path d="M3 3v5h5" />
                     </svg>
-                    <span>Reset Demo Notes</span>
+                    <span>Clear sticky notes</span>
                   </button>
                 </div>
               )}
@@ -989,11 +1342,24 @@ export function StickyNotesPopup() {
             {/* Scrollable Notes Feed */}
             <div className="flex-1 overflow-y-auto px-4 pb-5 space-y-3.5">
               {filteredEntries.length === 0 ? (
-                <div className="py-16 px-4 text-center text-[#9e9e9e]">
-                  <p className="text-[13.5px] mb-1">No notes in {activeCategory}</p>
-                  <p className="text-[12px] text-[#757575]">
-                    Click &quot;+ Note&quot; above to create one in this category.
-                  </p>
+                <div className="py-12 px-4 text-center text-[#9e9e9e] space-y-3">
+                  <div>
+                    <p className="text-[13.5px] font-medium text-[#d4d4d4] mb-1">
+                      {activeCategory === 'All'
+                        ? 'Your sticky notes board is empty'
+                        : `No notes in ${activeCategory}`}
+                    </p>
+                    <p className="text-[12px] text-[#8a8a8a]">
+                      Capture quick ideas, interview prep reminders, or job links to keep handy across tabs.
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={openComposerModal}
+                    className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-[7px] bg-[#c58af9] hover:bg-[#d2a1fb] text-[#1c1326] text-[12px] font-semibold transition-colors cursor-pointer"
+                  >
+                    + New Note
+                  </button>
                 </div>
               ) : (
                 filteredEntries.map((entry) => {
@@ -1015,9 +1381,30 @@ export function StickyNotesPopup() {
                     return (
                       <article
                         key={`job-${job.id}`}
-                        onClick={() => setDetailTarget({ kind: 'job', id: job.id })}
+                        data-open-note={job.id}
+                        onPointerDown={(e) => {
+                          if ((e.target as HTMLElement).closest('button, a, input, select, textarea, [data-prevent-drag]')) return;
+                          setCardDrag({
+                            kind: 'job',
+                            id: job.id,
+                            title: displayTitle,
+                            body: job.jobDescription || '',
+                            theme: job.noteTheme || 'blue',
+                            startX: e.clientX,
+                            startY: e.clientY,
+                            currentX: e.clientX,
+                            currentY: e.clientY,
+                            active: false,
+                          });
+                        }}
+                        onClick={() => {
+                          if (suppressCardClickRef.current) return;
+                          setDetailTarget({ kind: 'job', id: job.id });
+                        }}
                         style={{ backgroundColor: theme.bg }}
-                        className="group relative rounded-[10px] overflow-hidden cursor-pointer shadow-[0_4px_14px_rgba(0,0,0,0.28)] hover:brightness-105 transition-all duration-150"
+                        className={`group relative rounded-[10px] overflow-hidden cursor-pointer shadow-[0_4px_14px_rgba(0,0,0,0.28)] hover:brightness-105 transition-all duration-150 ${
+                          cardDrag?.id === job.id && cardDrag?.active ? 'opacity-40 scale-[0.98]' : ''
+                        }`}
                       >
                         <div style={{ backgroundColor: theme.accent }} className="h-[4px] w-full" />
                         <div className="px-3.5 pt-2.5 pb-3.5">
@@ -1073,10 +1460,10 @@ export function StickyNotesPopup() {
                             </div>
                           </div>
 
-                          {job.noteCustomImage ? (
+                          {isSafeDataImageUrl(job.noteCustomImage) ? (
                             <div className="mb-3 rounded-[7px] overflow-hidden bg-black/20">
                               <img
-                                src={job.noteCustomImage}
+                                src={job.noteCustomImage!}
                                 alt={displayTitle}
                                 className="w-full h-[126px] object-cover block"
                               />
@@ -1136,9 +1523,36 @@ export function StickyNotesPopup() {
                   return (
                     <article
                       key={`note-${note.id}`}
-                      onClick={() => setDetailTarget({ kind: 'note', id: note.id })}
+                      data-open-note={note.id}
+                      onPointerDown={(e) => {
+                        if (
+                          (e.target as HTMLElement).closest(
+                            'button, a, input, textarea, select, [data-prevent-drag]'
+                          )
+                        ) {
+                          return;
+                        }
+                        setCardDrag({
+                          kind: 'note',
+                          id: note.id,
+                          title: note.title || note.category || 'Note',
+                          body: note.body || '',
+                          theme: note.theme || 'purple',
+                          startX: e.clientX,
+                          startY: e.clientY,
+                          currentX: e.clientX,
+                          currentY: e.clientY,
+                          active: false,
+                        });
+                      }}
+                      onClick={() => {
+                        if (suppressCardClickRef.current) return;
+                        setDetailTarget({ kind: 'note', id: note.id });
+                      }}
                       style={{ backgroundColor: theme.bg }}
-                      className="group relative rounded-[10px] overflow-hidden cursor-pointer shadow-[0_4px_14px_rgba(0,0,0,0.28)] hover:brightness-105 transition-all duration-150"
+                      className={`group relative rounded-[10px] overflow-hidden cursor-pointer shadow-[0_4px_14px_rgba(0,0,0,0.28)] hover:brightness-105 transition-all duration-150 ${
+                        cardDrag?.id === note.id && cardDrag?.active ? 'opacity-40 scale-[0.98]' : ''
+                      }`}
                     >
                       <div style={{ backgroundColor: theme.accent }} className="h-[4px] w-full" />
                       <div className="px-3.5 pt-2.5 pb-3.5">
@@ -1188,10 +1602,10 @@ export function StickyNotesPopup() {
                           </div>
                         </div>
 
-                        {note.customImage ? (
+                        {isSafeDataImageUrl(note.customImage) ? (
                           <div className="mb-3 rounded-[7px] overflow-hidden bg-black/20">
                             <img
-                              src={note.customImage}
+                              src={note.customImage!}
                               alt={note.title}
                               className="w-full h-[126px] object-cover block"
                             />
@@ -1408,10 +1822,10 @@ export function StickyNotesPopup() {
                         </div>
                       )}
 
-                      {activeDetailJob.noteCustomImage ? (
+                      {isSafeDataImageUrl(activeDetailJob.noteCustomImage) ? (
                         <div className="mb-3.5 rounded-[8px] overflow-hidden">
                           <img
-                            src={activeDetailJob.noteCustomImage}
+                            src={activeDetailJob.noteCustomImage!}
                             alt={activeDetailJob.jobTitle || 'Attached snapshot'}
                             className="w-full max-h-44 object-cover rounded-[7px]"
                           />
@@ -1578,10 +1992,10 @@ export function StickyNotesPopup() {
                         <span className="text-white/80">{activeDetailNote.date}</span>
                       </div>
 
-                      {activeDetailNote.customImage ? (
+                      {isSafeDataImageUrl(activeDetailNote.customImage) ? (
                         <div className="mb-3.5 rounded-[8px] overflow-hidden">
                           <img
-                            src={activeDetailNote.customImage}
+                            src={activeDetailNote.customImage!}
                             alt={activeDetailNote.title}
                             className="w-full max-h-44 object-cover rounded-[7px]"
                           />
@@ -1613,7 +2027,7 @@ export function StickyNotesPopup() {
                         contentEditable
                         suppressContentEditableWarning
                         onInput={(e) => {
-                          const nextHtml = e.currentTarget.innerHTML;
+                          const nextHtml = sanitizeRichHtml(e.currentTarget.innerHTML);
                           updateStickyNote(activeDetailNote.id, (prev) => ({
                             ...prev,
                             body: nextHtml,
@@ -1914,7 +2328,53 @@ export function StickyNotesPopup() {
             <span className="truncate">{toastMessage}</span>
           </div>
         )}
-      </main>
+        </aside>
+      )}
+
+      {/* In-Page Torn-out Single Notes */}
+      {tornNotes.map((torn) => {
+        const note = torn.kind === 'note' ? stickyNotes.find((n) => n.id === torn.targetId) : null;
+        const job = torn.kind === 'job' ? jobs.find((j) => j.id === torn.targetId) : null;
+        if (!note && !job) return null;
+
+        const themeId = (torn.kind === 'note' ? note?.theme : job?.noteTheme) || 'green';
+        const theme = STICKY_NOTE_THEMES[themeId] || STICKY_NOTE_THEMES.green;
+        const content = (torn.kind === 'note' ? note?.body : job?.jobDescription) || '';
+        const title = (torn.kind === 'note' ? note?.title : job?.jobTitle || job?.company) || 'Sticky Note';
+
+        return (
+          <TornNoteCard
+            key={torn.id}
+            torn={torn}
+            theme={theme}
+            title={title}
+            content={content}
+            onMove={(nx, ny) => {
+              setTornNotes((prev) =>
+                prev.map((t) => (t.id === torn.id ? { ...t, x: nx, y: ny } : t))
+              );
+            }}
+            onChangeTheme={(newTheme) => {
+              if (torn.kind === 'note') {
+                updateStickyNote(torn.targetId, (p) => ({ ...p, theme: newTheme }));
+              } else {
+                updateJob(torn.targetId, (p) => ({ ...p, noteTheme: newTheme }));
+              }
+            }}
+            onChangeContent={(newContent) => {
+              if (torn.kind === 'note') {
+                updateStickyNote(torn.targetId, (p) => ({ ...p, body: newContent }));
+              } else {
+                updateJob(torn.targetId, (p) => ({ ...p, jobDescription: newContent }));
+              }
+            }}
+            onDockBack={() => {
+              setTornNotes((prev) => prev.filter((t) => t.id !== torn.id));
+              showToast('Docked note back into Sticky Notes');
+            }}
+          />
+        );
+      })}
 
       {taskMenuOpen && taskMenuPlacement === 'right' && activeDetailJob && (
         <div
@@ -1927,6 +2387,6 @@ export function StickyNotesPopup() {
           {renderTaskMenuItems(activeDetailJob)}
         </div>
       )}
-    </div>
+    </>
   );
 }

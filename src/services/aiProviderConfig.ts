@@ -1,4 +1,6 @@
-export type AiProviderType = 'gemini' | 'ollama';
+import { getProviderDef, ProviderKind } from './aiProviderRegistry';
+
+export type AiProviderType = 'gemini' | 'ollama' | 'openai' | 'openrouter' | 'anthropic' | 'custom';
 
 export interface AiProviderConfig {
   provider: AiProviderType;
@@ -50,9 +52,15 @@ function sanitizeConfig(raw: Partial<AiProviderConfig> | null | undefined): AiPr
   if (!raw || typeof raw !== 'object') {
     return { ...DEFAULT_AI_PROVIDER_CONFIG };
   }
-  const provider: AiProviderType = raw.provider === 'ollama' ? 'ollama' : 'gemini';
+  const provider = (raw.provider && ['gemini', 'ollama', 'openai', 'openrouter', 'anthropic', 'custom'].includes(raw.provider)
+    ? raw.provider
+    : 'gemini') as AiProviderType;
+
+  const def = getProviderDef(provider);
   const ollamaBaseUrl = normalizeOllamaBaseUrl(
-    typeof raw.ollamaBaseUrl === 'string' ? raw.ollamaBaseUrl : DEFAULT_OLLAMA_BASE_URL
+    typeof raw.ollamaBaseUrl === 'string' && raw.ollamaBaseUrl.trim()
+      ? raw.ollamaBaseUrl
+      : def.defaultBaseUrl || DEFAULT_OLLAMA_BASE_URL
   );
   const ollamaApiKey = typeof raw.ollamaApiKey === 'string' ? raw.ollamaApiKey : '';
   const availableOllamaModels = Array.isArray(raw.availableOllamaModels)
@@ -64,7 +72,9 @@ function sanitizeConfig(raw: Partial<AiProviderConfig> | null | undefined): AiPr
         )
       )
     : [];
-  const ollamaModel = typeof raw.ollamaModel === 'string' ? raw.ollamaModel.trim() : '';
+  const ollamaModel = typeof raw.ollamaModel === 'string' && raw.ollamaModel.trim()
+    ? raw.ollamaModel.trim()
+    : def.defaultModel;
 
   return {
     provider,
@@ -94,7 +104,7 @@ let currentLiveStream: AiLiveStreamState = {
   active: false,
   taskLabel: '',
   provider: currentConfig.provider,
-  model: currentConfig.provider === 'ollama' ? currentConfig.ollamaModel : DEFAULT_GEMINI_MODEL,
+  model: currentConfig.provider === 'gemini' ? DEFAULT_GEMINI_MODEL : currentConfig.ollamaModel,
   tokensText: '',
   usedFallback: false,
 };
@@ -108,7 +118,18 @@ export function getAiProviderConfig(): AiProviderConfig {
 }
 
 export function saveAiProviderConfig(next: Partial<AiProviderConfig>): AiProviderConfig {
-  currentConfig = sanitizeConfig({ ...currentConfig, ...next });
+  const merged = { ...currentConfig, ...next };
+  // If provider changed, auto-fill default base url and model if not explicitly provided
+  if (next.provider && next.provider !== currentConfig.provider) {
+    const def = getProviderDef(next.provider);
+    if (!next.ollamaBaseUrl && def.defaultBaseUrl) {
+      merged.ollamaBaseUrl = def.defaultBaseUrl;
+    }
+    if (!next.ollamaModel && def.defaultModel) {
+      merged.ollamaModel = def.defaultModel;
+    }
+  }
+  currentConfig = sanitizeConfig(merged);
   try {
     if (typeof localStorage !== 'undefined') {
       localStorage.setItem(AI_PROVIDER_STORAGE_KEY, JSON.stringify(currentConfig));
@@ -172,7 +193,7 @@ export function resetAiLiveStream(): void {
     active: false,
     taskLabel: '',
     provider: currentConfig.provider,
-    model: currentConfig.provider === 'ollama' ? currentConfig.ollamaModel : DEFAULT_GEMINI_MODEL,
+    model: currentConfig.provider === 'gemini' ? DEFAULT_GEMINI_MODEL : currentConfig.ollamaModel,
     tokensText: '',
     usedFallback: false,
   };
@@ -191,17 +212,11 @@ export function formatHeaderProviderLabel(config: AiProviderConfig): {
   modelName: string;
   fullLabel: string;
 } {
-  if (config.provider === 'ollama') {
-    const modelName = config.ollamaModel.trim() || 'No model';
-    return {
-      providerName: 'Ollama',
-      modelName,
-      fullLabel: `Ollama • ${modelName}`,
-    };
-  }
+  const def = getProviderDef(config.provider);
+  const modelName = config.ollamaModel.trim() || def.defaultModel || 'No model';
   return {
-    providerName: 'Gemini',
-    modelName: DEFAULT_GEMINI_MODEL,
-    fullLabel: `Gemini • ${DEFAULT_GEMINI_MODEL}`,
+    providerName: def.name,
+    modelName,
+    fullLabel: `${def.name.split(' ')[0]} • ${modelName}`,
   };
 }

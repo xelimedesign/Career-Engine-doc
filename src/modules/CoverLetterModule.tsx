@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
   Briefcase,
   Building2,
@@ -112,6 +112,8 @@ export function CoverLetterModule() {
     setSelectedJobId,
     setActiveModule,
     openReviewCenter,
+    coverLetterLaunchRequest,
+    clearCoverLetterLaunchRequest,
     documentSnapshots,
     recordDocumentSnapshot,
     undoLatestSnapshotForDocument,
@@ -146,16 +148,97 @@ export function CoverLetterModule() {
     return evaluateCoverLetterStandards(activeCoverLetter, linkedResumeForScore, pageCount);
   }, [activeCoverLetter, linkedResumeForScore, pageCount]);
 
+  useEffect(() => {
+    if (!coverLetterLaunchRequest || !activeCoverLetter) return;
+    if (coverLetterLaunchRequest.coverLetterId !== activeCoverLetter.id) return;
+    clearCoverLetterLaunchRequest();
+    setCenterTab('letter');
+
+    const jobTarget = jobs.find((j) => j.id === coverLetterLaunchRequest.jobId);
+    const research = jobTarget ? getCompanyResearchForJob(jobTarget.id) : undefined;
+    const matchObj = jobTarget ? getJobMatchForJob(jobTarget.id) : undefined;
+    const refResume = activeCoverLetter.linkedResumeId
+      ? resumes.find((r) => r.id === activeCoverLetter.linkedResumeId)
+      : undefined;
+
+    setAiError(null);
+    setAiLoading(true);
+    generateCoverLetterWithAi({
+      applicant: activeCoverLetter.applicant,
+      employer: activeCoverLetter.employer,
+      jobInfo: activeCoverLetter.jobInfo,
+      careerProfile: profile,
+      selectedResume: refResume,
+      writingStyle: activeCoverLetter.writingStyle,
+      length: activeCoverLetter.length,
+      companyResearch: research,
+      jobMatch: matchObj,
+    })
+      .then((res) => {
+        setPendingReview({
+          mode: 'generate',
+          title: 'Review Generated Cover Letter',
+          rationale: `Generated in ${activeCoverLetter.writingStyle} style (${activeCoverLetter.length} length) grounded strictly in your Career Profile${refResume ? ` and "${refResume.name}"` : ''}${research?.status === 'completed' ? ` + verified Company Intelligence for ${research.companyName}` : ''}.`,
+          groundingNotes: res.groundingNotes,
+          salutation: res.salutation,
+          closingSignOff: res.closingSignOff,
+          paragraphs: res.paragraphs.map((p, idx) => ({
+            id: `gen-${idx}-${crypto.randomUUID().slice(0, 5)}`,
+            label: p.label,
+            text: p.text,
+          })),
+        });
+      })
+      .catch((err) => {
+        setAiError(err instanceof Error ? err.message : 'Cover letter generation failed.');
+      })
+      .finally(() => {
+        setAiLoading(false);
+      });
+  }, [
+    activeCoverLetter,
+    clearCoverLetterLaunchRequest,
+    coverLetterLaunchRequest,
+    getCompanyResearchForJob,
+    getJobMatchForJob,
+    jobs,
+    profile,
+    resumes,
+  ]);
+
   if (!activeCoverLetter) {
     return (
-      <div className="p-12 text-center">
-        <button
-          type="button"
-          onClick={() => createCoverLetter({ prefillFromProfile: true })}
-          className="px-4 py-2 text-xs font-semibold text-white bg-slate-900 rounded-md cursor-pointer"
-        >
-          Create First Cover Letter
-        </button>
+      <div className="max-w-2xl mx-auto my-12 bg-white border border-slate-200 rounded-lg p-10 text-center space-y-4">
+        <div className="space-y-1.5">
+          <h2 className="text-base font-semibold text-slate-900">No cover letters created yet</h2>
+          <p className="text-xs text-slate-500 leading-relaxed max-w-md mx-auto">
+            Create a tailored cover letter from your Career Profile, or link a tracked job posting for role-specific context.
+          </p>
+        </div>
+        <div className="flex flex-wrap items-center justify-center gap-2">
+          <button
+            type="button"
+            onClick={() => createCoverLetter({ prefillFromProfile: true })}
+            className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-semibold text-white bg-slate-900 hover:bg-slate-800 rounded-md cursor-pointer"
+          >
+            <Plus className="w-3.5 h-3.5" />
+            Create Cover Letter
+          </button>
+          <button
+            type="button"
+            onClick={() => setActiveModule('jobs')}
+            className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-semibold text-slate-800 bg-white border border-slate-300 hover:bg-slate-50 rounded-md cursor-pointer"
+          >
+            Browse Jobs
+          </button>
+          <button
+            type="button"
+            onClick={() => setActiveModule('profile')}
+            className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-medium text-slate-600 hover:text-slate-900 cursor-pointer"
+          >
+            Open Career Profile
+          </button>
+        </div>
       </div>
     );
   }
@@ -393,7 +476,7 @@ export function CoverLetterModule() {
   };
 
   return (
-    <div className="flex flex-col h-[calc(100vh-3.5rem)] overflow-hidden">
+    <div className="flex flex-col flex-1 min-h-0 overflow-hidden">
       {/* Mobile Panel Switcher */}
       <div className="lg:hidden flex items-center border-b border-slate-200 bg-white px-4 py-2 gap-2 shrink-0">
         {(['left', 'center', 'right'] as const).map((p) => (
@@ -467,10 +550,9 @@ export function CoverLetterModule() {
               </button>
               <button
                 type="button"
-                disabled={coverLetters.length <= 1}
                 onClick={() => deleteCoverLetter(activeCoverLetter.id)}
                 aria-label="Delete cover letter"
-                className="px-2.5 py-1.5 text-[11px] text-slate-600 bg-slate-100 hover:bg-rose-50 hover:text-rose-700 disabled:opacity-40 rounded cursor-pointer"
+                className="px-2.5 py-1.5 text-[11px] text-slate-600 bg-slate-100 hover:bg-rose-50 hover:text-rose-700 rounded cursor-pointer"
               >
                 <Trash2 className="w-3 h-3" />
               </button>
@@ -847,45 +929,57 @@ export function CoverLetterModule() {
                     </button>
                   </div>
 
+                  <p className="text-[11px] text-slate-500">
+                    AI-generated drafts and edits are advisory — review dates, employer names, and personal details before exporting or sending.
+                  </p>
+
                   {linkedJob && (
-                    <div className="pt-2 border-t border-slate-100 flex flex-wrap items-center justify-between gap-2 text-xs">
-                      <div className="flex items-center gap-1.5 text-slate-600">
-                        <Building2 className="w-3.5 h-3.5 text-slate-500 shrink-0" />
-                        {linkedResearch?.status === 'completed' ? (
-                          <span>
-                            Company Intelligence ready for{' '}
-                            <strong className="text-slate-900">{linkedResearch.companyName}</strong>{' '}
-                            <span className="font-mono-tabular text-emerald-800">
-                              (
-                              {
-                                linkedResearch.findings.filter(
-                                  (f) => f.verificationStatus === 'approved'
-                                ).length
-                              }{' '}
-                              approved findings)
+                    <div className="pt-2 border-t border-slate-100 space-y-1.5 text-xs">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <div className="flex items-center gap-1.5 text-slate-600">
+                          <Building2 className="w-3.5 h-3.5 text-slate-500 shrink-0" />
+                          {linkedResearch?.status === 'completed' ? (
+                            <span>
+                              Company Intelligence ready for{' '}
+                              <strong className="text-slate-900">{linkedResearch.companyName}</strong>
+                              {linkedResearch.headquarters ? ` (${linkedResearch.headquarters})` : ''}{' '}
+                              <span className="font-mono-tabular text-emerald-800">
+                                (
+                                {
+                                  linkedResearch.findings.filter(
+                                    (f) => f.verificationStatus !== 'dismissed'
+                                  ).length
+                                }{' '}
+                                findings)
+                              </span>
                             </span>
-                          </span>
-                        ) : (
+                          ) : (
+                            <span>
+                              No Company Research linked for <strong>{linkedJob.company}</strong> yet.
+                            </span>
+                          )}
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setSelectedJobId(linkedJob.id);
+                            setActiveModule('jobs');
+                          }}
+                          className="inline-flex items-center gap-1 text-[11px] font-medium text-slate-700 hover:text-slate-900 underline cursor-pointer"
+                        >
                           <span>
-                            No Company Research linked for <strong>{linkedJob.company}</strong> yet.
+                            {linkedResearch?.status === 'completed'
+                              ? 'Inspect Research'
+                              : 'Research Company'}
                           </span>
-                        )}
+                          <ExternalLink className="w-3 h-3" />
+                        </button>
                       </div>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setSelectedJobId(linkedJob.id);
-                          setActiveModule('jobs');
-                        }}
-                        className="inline-flex items-center gap-1 text-[11px] font-medium text-slate-700 hover:text-slate-900 underline cursor-pointer"
-                      >
-                        <span>
-                          {linkedResearch?.status === 'completed'
-                            ? 'Inspect Research'
-                            : 'Research Company'}
-                        </span>
-                        <ExternalLink className="w-3 h-3" />
-                      </button>
+                      {linkedResearch?.status === 'completed' && linkedResearch.overview && (
+                        <p className="text-[11px] text-slate-600 leading-relaxed pl-5">
+                          {linkedResearch.overview}
+                        </p>
+                      )}
                     </div>
                   )}
                 </div>

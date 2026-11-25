@@ -56,11 +56,16 @@ import {
 } from '../data/stickyNotesData';
 import { DEFAULT_REVIEW_SCORING_CONFIG } from '../services/reviewScoring';
 import {
+  isJobBoardOrAggregatorUrl,
+  isPlaceholderOrAggregatorName,
+} from '../utils/companyResolver';
+import {
   OperationType,
   auth,
   clearDriveAccessToken,
   db,
   getDriveAccessToken,
+  googleAuthProvider,
   googleProvider,
   handleFirestoreError,
   hasDriveAccessToken,
@@ -78,6 +83,8 @@ import {
 import { ensureStableProfileIds, stripUndefinedForFirestore } from '../utils/profileIds';
 
 const STORAGE_KEY = 'career_engine_workspace_v1';
+const GUEST_WORKSPACE_STORAGE_KEY = 'career_engine_guest_workspace_v1';
+const GUEST_MODE_SESSION_KEY = 'career_engine_guest_active_v1';
 const STICKY_WINDOW_SESSION_KEY = 'career_engine_sticky_window_v1';
 
 const DEFAULT_DRIVE_EXPORT_SETTINGS: DriveExportSettings = {
@@ -115,6 +122,16 @@ export interface ReviewLaunchTarget {
   scope?: ReviewScope;
 }
 
+export interface TailorLaunchRequest {
+  resumeId: string;
+  jobId: string;
+}
+
+export interface CoverLetterLaunchRequest {
+  coverLetterId: string;
+  jobId: string;
+}
+
 export type AddJobInput = Omit<
   JobApplication,
   'id' | 'createdAt' | 'updatedAt' | 'company' | 'jobTitle'
@@ -126,11 +143,15 @@ export type AddJobInput = Omit<
 interface CareerContextValue {
   // Auth & Cloud Sync State
   user: User | null;
+  isGuest: boolean;
   authLoading: boolean;
   syncStatus: WorkspaceSyncStatus;
   syncError: string | null;
   signInWithGoogle: () => Promise<void>;
   signOutUser: () => Promise<void>;
+  enterGuestMode: () => void;
+  exitGuestMode: () => void;
+  resetWorkspaceData: () => Promise<void>;
 
   // Google Drive Export & Auto-Sync
   driveConnected: boolean;
@@ -180,7 +201,7 @@ interface CareerContextValue {
   updateStickyNote: (id: string, updater: (prev: StickyNoteItem) => StickyNoteItem) => void;
   deleteStickyNote: (id: string) => void;
   addStickyCategory: (category: string) => string;
-  resetDemoStickyNotes: () => void;
+  clearStickyNotes: () => void;
   isStickyNotesOpen: boolean;
   isStickyNotesMinimized: boolean;
   openStickyNotes: () => void;
@@ -217,6 +238,10 @@ interface CareerContextValue {
   // Cross-module actions from Job Tracker
   openTailoredResumeForJob: (jobId: string) => ResumeDocument | undefined;
   openCoverLetterForJob: (jobId: string, resumeId?: string) => CoverLetterDocument | undefined;
+  tailorLaunchRequest: TailorLaunchRequest | null;
+  clearTailorLaunchRequest: () => void;
+  coverLetterLaunchRequest: CoverLetterLaunchRequest | null;
+  clearCoverLetterLaunchRequest: () => void;
 
   // Company Intelligence & Job Matching
   selectedJobId: string;
@@ -281,21 +306,51 @@ interface CareerContextValue {
 
 const CareerContext = createContext<CareerContextValue | null>(null);
 
-function loadLocalWorkspace(): PersistedWorkspace {
+function getWorkspaceStorageKey(uid?: string | null): string {
+  return uid ? `${STORAGE_KEY}_${uid}` : GUEST_WORKSPACE_STORAGE_KEY;
+}
+
+function createInitialWorkspace(): PersistedWorkspace {
+  return {
+    profile: ensureStableProfileIds({
+      ...INITIAL_CAREER_PROFILE,
+      updatedAt: new Date().toISOString(),
+    }),
+    jobs: INITIAL_JOBS,
+    resumes: INITIAL_RESUMES,
+    coverLetters: INITIAL_COVER_LETTERS,
+    companies: [],
+    companyResearches: [],
+    jobMatches: [],
+    applicationReviews: [],
+    documentSnapshots: [],
+    aiWritingHistory: [],
+    reviewScoringConfig: DEFAULT_REVIEW_SCORING_CONFIG,
+    stickyNotes: DEFAULT_STICKY_NOTES,
+    stickyCategories: DEFAULT_STICKY_CATEGORIES,
+    driveExportSettings: DEFAULT_DRIVE_EXPORT_SETTINGS,
+    activeResumeId: INITIAL_RESUMES[0]?.id || '',
+    activeCoverLetterId: INITIAL_COVER_LETTERS[0]?.id || '',
+    activeReviewId: '',
+  };
+}
+
+function loadLocalWorkspace(storageKey?: string | null): PersistedWorkspace {
+  if (!storageKey) {
+    return createInitialWorkspace();
+  }
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
+    const raw = localStorage.getItem(storageKey);
     if (raw) {
       const parsed = JSON.parse(raw) as Partial<PersistedWorkspace>;
-      const profile = ensureStableProfileIds(parsed.profile ?? INITIAL_CAREER_PROFILE);
+      const profile = ensureStableProfileIds(
+        parsed.profile ?? { ...INITIAL_CAREER_PROFILE, updatedAt: new Date().toISOString() }
+      );
       const jobs = Array.isArray(parsed.jobs) ? parsed.jobs : INITIAL_JOBS;
-      const resumes =
-        Array.isArray(parsed.resumes) && parsed.resumes.length > 0
-          ? parsed.resumes
-          : INITIAL_RESUMES;
-      const coverLetters =
-        Array.isArray(parsed.coverLetters) && parsed.coverLetters.length > 0
-          ? parsed.coverLetters
-          : INITIAL_COVER_LETTERS;
+      const resumes = Array.isArray(parsed.resumes) ? parsed.resumes : INITIAL_RESUMES;
+      const coverLetters = Array.isArray(parsed.coverLetters)
+        ? parsed.coverLetters
+        : INITIAL_COVER_LETTERS;
 
       const companies = Array.isArray(parsed.companies) ? parsed.companies : [];
       const companyResearches = Array.isArray(parsed.companyResearches)
@@ -315,13 +370,15 @@ function loadLocalWorkspace(): PersistedWorkspace {
         parsed.reviewScoringConfig && parsed.reviewScoringConfig.version
           ? parsed.reviewScoringConfig
           : DEFAULT_REVIEW_SCORING_CONFIG;
-      const stickyNotes = Array.isArray(parsed.stickyNotes)
+      const rawStickyNotes = Array.isArray(parsed.stickyNotes)
         ? parsed.stickyNotes
         : DEFAULT_STICKY_NOTES;
-      const stickyCategories =
+      const stickyNotes = rawStickyNotes.filter((n: StickyNoteItem) => n.category !== 'Sports');
+      const rawStickyCategories =
         Array.isArray(parsed.stickyCategories) && parsed.stickyCategories.length > 0
           ? parsed.stickyCategories
           : DEFAULT_STICKY_CATEGORIES;
+      const stickyCategories = rawStickyCategories.filter((c: string) => c !== 'Sports');
       const driveExportSettings: DriveExportSettings = parsed.driveExportSettings
         ? {
             autoExportEnabled: Boolean(parsed.driveExportSettings.autoExportEnabled),
@@ -354,11 +411,11 @@ function loadLocalWorkspace(): PersistedWorkspace {
         activeResumeId:
           parsed.activeResumeId && resumes.some((r) => r.id === parsed.activeResumeId)
             ? parsed.activeResumeId
-            : resumes[0].id,
+            : resumes[0]?.id || '',
         activeCoverLetterId:
           parsed.activeCoverLetterId && coverLetters.some((c) => c.id === parsed.activeCoverLetterId)
             ? parsed.activeCoverLetterId
-            : coverLetters[0].id,
+            : coverLetters[0]?.id || '',
         activeReviewId:
           parsed.activeReviewId &&
           applicationReviews.some((rv) => rv.id === parsed.activeReviewId)
@@ -370,25 +427,7 @@ function loadLocalWorkspace(): PersistedWorkspace {
     // Fallback to initial workspace if localStorage is unavailable or corrupt
   }
 
-  return {
-    profile: ensureStableProfileIds(INITIAL_CAREER_PROFILE),
-    jobs: INITIAL_JOBS,
-    resumes: INITIAL_RESUMES,
-    coverLetters: INITIAL_COVER_LETTERS,
-    companies: [],
-    companyResearches: [],
-    jobMatches: [],
-    applicationReviews: [],
-    documentSnapshots: [],
-    aiWritingHistory: [],
-    reviewScoringConfig: DEFAULT_REVIEW_SCORING_CONFIG,
-    stickyNotes: DEFAULT_STICKY_NOTES,
-    stickyCategories: DEFAULT_STICKY_CATEGORIES,
-    driveExportSettings: DEFAULT_DRIVE_EXPORT_SETTINGS,
-    activeResumeId: INITIAL_RESUMES[0].id,
-    activeCoverLetterId: INITIAL_COVER_LETTERS[0].id,
-    activeReviewId: '',
-  };
+  return createInitialWorkspace();
 }
 
 function loadStickyWindowSessionState(): { isOpen: boolean; isMinimized: boolean } {
@@ -408,13 +447,29 @@ function loadStickyWindowSessionState(): { isOpen: boolean; isMinimized: boolean
 }
 
 export function CareerProvider({ children }: { children: React.ReactNode }) {
-  const [initial] = useState<PersistedWorkspace>(() => loadLocalWorkspace());
+  const [isGuest, setIsGuest] = useState<boolean>(() => {
+    try {
+      return sessionStorage.getItem(GUEST_MODE_SESSION_KEY) === 'true';
+    } catch {
+      return false;
+    }
+  });
+  const [initial] = useState<PersistedWorkspace>(() => {
+    try {
+      if (sessionStorage.getItem(GUEST_MODE_SESSION_KEY) === 'true') {
+        return loadLocalWorkspace(GUEST_WORKSPACE_STORAGE_KEY);
+      }
+    } catch {
+      // Ignore storage read errors
+    }
+    return createInitialWorkspace();
+  });
   const [user, setUser] = useState<User | null>(null);
   const [authLoading, setAuthLoading] = useState(true);
   const [syncStatus, setSyncStatus] = useState<WorkspaceSyncStatus>('local');
   const [syncError, setSyncError] = useState<string | null>(null);
 
-  const [activeModule, setActiveModule] = useState<AppModule>('resumes');
+  const [activeModule, setActiveModule] = useState<AppModule>('profile');
   const [profile, setProfile] = useState<CareerProfile>(initial.profile);
   const [jobs, setJobs] = useState<JobApplication[]>(initial.jobs);
   const [resumes, setResumes] = useState<ResumeDocument[]>(initial.resumes);
@@ -452,6 +507,9 @@ export function CareerProvider({ children }: { children: React.ReactNode }) {
   );
   const [activeReviewId, setActiveReviewId] = useState<string>(initial.activeReviewId);
   const [reviewLaunchTarget, setReviewLaunchTarget] = useState<ReviewLaunchTarget | null>(null);
+  const [tailorLaunchRequest, setTailorLaunchRequest] = useState<TailorLaunchRequest | null>(null);
+  const [coverLetterLaunchRequest, setCoverLetterLaunchRequest] =
+    useState<CoverLetterLaunchRequest | null>(null);
   const [selectedJobId, setSelectedJobId] = useState<string>(initial.jobs[0]?.id || '');
   const [activeResumeId, setActiveResumeId] = useState<string>(initial.activeResumeId);
   const [activeCoverLetterId, setActiveCoverLetterId] = useState<string>(initial.activeCoverLetterId);
@@ -524,8 +582,30 @@ export function CareerProvider({ children }: { children: React.ReactNode }) {
     }
   }, [isStickyNotesOpen, isStickyNotesMinimized]);
 
-  // Signed-out localStorage fallback persistence (also keeps local copy warm)
+  const applyWorkspaceState = useCallback((workspace: PersistedWorkspace) => {
+    setProfile(workspace.profile);
+    setJobs(workspace.jobs);
+    setResumes(workspace.resumes);
+    setCoverLetters(workspace.coverLetters);
+    setCompanies(workspace.companies);
+    setCompanyResearches(workspace.companyResearches);
+    setJobMatches(workspace.jobMatches);
+    setApplicationReviews(workspace.applicationReviews);
+    setDocumentSnapshots(workspace.documentSnapshots);
+    setAiWritingHistory(workspace.aiWritingHistory);
+    setReviewScoringConfig(workspace.reviewScoringConfig);
+    setStickyNotes(workspace.stickyNotes);
+    setStickyCategories(workspace.stickyCategories);
+    setDriveExportSettings(workspace.driveExportSettings);
+    setActiveResumeId(workspace.activeResumeId);
+    setActiveCoverLetterId(workspace.activeCoverLetterId);
+    setActiveReviewId(workspace.activeReviewId);
+    setSelectedJobId(workspace.jobs[0]?.id || '');
+  }, []);
+
+  // Isolated localStorage cache (authenticated users by uid, guest mode in dedicated namespace)
   useEffect(() => {
+    if (!user && !isGuest) return;
     try {
       const payload: PersistedWorkspace = {
         profile,
@@ -546,12 +626,15 @@ export function CareerProvider({ children }: { children: React.ReactNode }) {
         activeCoverLetterId,
         activeReviewId,
       };
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
+      const storageKey = user ? getWorkspaceStorageKey(user.uid) : GUEST_WORKSPACE_STORAGE_KEY;
+      localStorage.setItem(storageKey, JSON.stringify(payload));
       setLastSavedAt(new Date().toISOString());
     } catch {
       // Ignore storage quota errors cleanly
     }
   }, [
+    user,
+    isGuest,
     profile,
     jobs,
     resumes,
@@ -666,16 +749,33 @@ export function CareerProvider({ children }: { children: React.ReactNode }) {
     const unsubscribe = onAuthStateChanged(auth, (firebaseUser) => {
       setUser(firebaseUser);
       setAuthLoading(false);
-      if (!firebaseUser) {
+      if (firebaseUser) {
+        setIsGuest(false);
+        try {
+          sessionStorage.removeItem(GUEST_MODE_SESSION_KEY);
+        } catch {
+          // Ignore storage errors
+        }
+      } else {
         clearDriveAccessToken();
         setPendingDriveExports([]);
         setDriveError(null);
         setSyncStatus('local');
         setSyncError(null);
+        let guestActive = false;
+        try {
+          guestActive = sessionStorage.getItem(GUEST_MODE_SESSION_KEY) === 'true';
+        } catch {
+          guestActive = false;
+        }
+        setIsGuest(guestActive);
+        applyWorkspaceState(
+          guestActive ? loadLocalWorkspace(GUEST_WORKSPACE_STORAGE_KEY) : createInitialWorkspace()
+        );
       }
     });
     return () => unsubscribe();
-  }, []);
+  }, [applyWorkspaceState]);
 
   // Firestore real-time synchronization & first-login cloud seeding
   useEffect(() => {
@@ -684,6 +784,8 @@ export function CareerProvider({ children }: { children: React.ReactNode }) {
     const uid = user.uid;
     let cancelled = false;
     const unsubs: Array<() => void> = [];
+    const uidInitialWorkspace = loadLocalWorkspace(getWorkspaceStorageKey(uid));
+    applyWorkspaceState(uidInitialWorkspace);
     setSyncStatus('syncing');
     setSyncError(null);
 
@@ -706,7 +808,7 @@ export function CareerProvider({ children }: { children: React.ReactNode }) {
       if (cancelled) return false;
 
       if (!profileSnap.exists()) {
-        const snapshot = stateRef.current;
+        const snapshot = uidInitialWorkspace;
         const normalizedProfile = ensureStableProfileIds(snapshot.profile);
         const batch = writeBatch(db);
 
@@ -798,7 +900,7 @@ export function CareerProvider({ children }: { children: React.ReactNode }) {
         try {
           const stickyMetaSnap = await getDoc(stickyMetaRef);
           if (!stickyMetaSnap.exists() && !cancelled) {
-            const snapshot = stateRef.current;
+            const snapshot = uidInitialWorkspace;
             const stickyBatch = writeBatch(db);
             snapshot.stickyNotes.forEach((note) => {
               stickyBatch.set(
@@ -881,12 +983,10 @@ export function CareerProvider({ children }: { children: React.ReactNode }) {
             const list = snap.docs
               .map((d) => d.data() as ResumeDocument)
               .sort((a, b) => (b.updatedAt || '').localeCompare(a.updatedAt || ''));
-            if (list.length > 0) {
-              setResumes(list);
-              setActiveResumeId((prev) =>
-                prev && list.some((r) => r.id === prev) ? prev : list[0].id
-              );
-            }
+            setResumes(list);
+            setActiveResumeId((prev) =>
+              prev && list.some((r) => r.id === prev) ? prev : list[0]?.id || ''
+            );
             setSyncStatus('synced');
           },
           onListenerError(`users/${uid}/resumes`)
@@ -900,12 +1000,10 @@ export function CareerProvider({ children }: { children: React.ReactNode }) {
             const list = snap.docs
               .map((d) => d.data() as CoverLetterDocument)
               .sort((a, b) => (b.updatedAt || '').localeCompare(a.updatedAt || ''));
-            if (list.length > 0) {
-              setCoverLetters(list);
-              setActiveCoverLetterId((prev) =>
-                prev && list.some((c) => c.id === prev) ? prev : list[0].id
-              );
-            }
+            setCoverLetters(list);
+            setActiveCoverLetterId((prev) =>
+              prev && list.some((c) => c.id === prev) ? prev : list[0]?.id || ''
+            );
             setSyncStatus('synced');
           },
           onListenerError(`users/${uid}/coverLetters`)
@@ -987,6 +1085,7 @@ export function CareerProvider({ children }: { children: React.ReactNode }) {
           (snap) => {
             const list = snap.docs
               .map((d) => d.data() as StickyNoteItem)
+              .filter((n) => n.category !== 'Sports')
               .sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
             setStickyNotes(list);
           },
@@ -1001,7 +1100,7 @@ export function CareerProvider({ children }: { children: React.ReactNode }) {
             if (snap.exists()) {
               const data = snap.data() as Partial<{ categories: string[] }>;
               if (Array.isArray(data.categories) && data.categories.length > 0) {
-                setStickyCategories(data.categories);
+                setStickyCategories(data.categories.filter((c) => c !== 'Sports'));
               }
             }
           },
@@ -1055,7 +1154,7 @@ export function CareerProvider({ children }: { children: React.ReactNode }) {
       cancelled = true;
       unsubs.forEach((unsub) => unsub());
     };
-  }, [user]);
+  }, [user, applyWorkspaceState]);
 
   const updateDriveExportSettings = useCallback(
     (updater: (prev: DriveExportSettings) => DriveExportSettings) => {
@@ -1454,7 +1553,7 @@ export function CareerProvider({ children }: { children: React.ReactNode }) {
   const signInWithGoogle = useCallback(async () => {
     setSyncError(null);
     setDriveError(null);
-    const result = await signInWithPopup(auth, googleProvider);
+    const result = await signInWithPopup(auth, googleAuthProvider);
     const credential = GoogleAuthProvider.credentialFromResult(result);
     if (credential?.accessToken) {
       setDriveAccessToken(credential.accessToken);
@@ -1472,6 +1571,115 @@ export function CareerProvider({ children }: { children: React.ReactNode }) {
     setDriveError(null);
     await signOut(auth);
   }, []);
+
+  const enterGuestMode = useCallback(() => {
+    try {
+      sessionStorage.setItem(GUEST_MODE_SESSION_KEY, 'true');
+    } catch {
+      // Ignore storage errors
+    }
+    setIsGuest(true);
+    setSyncStatus('local');
+    setSyncError(null);
+    setActiveModule('profile');
+    applyWorkspaceState(loadLocalWorkspace(GUEST_WORKSPACE_STORAGE_KEY));
+  }, [applyWorkspaceState]);
+
+  const exitGuestMode = useCallback(() => {
+    debounceTimersRef.current.forEach((timer) => clearTimeout(timer));
+    debounceTimersRef.current.clear();
+    try {
+      sessionStorage.removeItem(GUEST_MODE_SESSION_KEY);
+    } catch {
+      // Ignore storage errors
+    }
+    setIsGuest(false);
+    setIsStickyNotesOpen(false);
+    setIsStickyNotesMinimized(false);
+    applyWorkspaceState(createInitialWorkspace());
+  }, [applyWorkspaceState]);
+
+  const resetWorkspaceData = useCallback(async () => {
+    debounceTimersRef.current.forEach((timer) => clearTimeout(timer));
+    debounceTimersRef.current.clear();
+    const emptyWorkspace = createInitialWorkspace();
+    const snapshot = stateRef.current;
+
+    if (user) {
+      const uid = user.uid;
+      try {
+        localStorage.removeItem(getWorkspaceStorageKey(uid));
+      } catch {
+        // Ignore storage errors
+      }
+
+      const deletions: Array<[string, ...string[]]> = [
+        ...snapshot.jobs.map((j): [string, ...string[]] => ['users', uid, 'jobs', j.id]),
+        ...snapshot.resumes.map((r): [string, ...string[]] => ['users', uid, 'resumes', r.id]),
+        ...snapshot.coverLetters.map((c): [string, ...string[]] => ['users', uid, 'coverLetters', c.id]),
+        ...snapshot.companyResearches.map((cr): [string, ...string[]] => ['users', uid, 'companyResearch', cr.id]),
+        ...snapshot.companies.map((comp): [string, ...string[]] => ['users', uid, 'companies', comp.id]),
+        ...snapshot.jobMatches.map((m): [string, ...string[]] => ['users', uid, 'jobMatches', m.id]),
+        ...snapshot.applicationReviews.map((rev): [string, ...string[]] => ['users', uid, 'reviews', rev.id]),
+        ...snapshot.documentSnapshots.map((s): [string, ...string[]] => ['users', uid, 'snapshots', s.id]),
+        ...snapshot.aiWritingHistory.map((sess): [string, ...string[]] => ['users', uid, 'aiWritingSessions', sess.id]),
+        ...snapshot.stickyNotes.map((n): [string, ...string[]] => ['users', uid, 'stickyNotes', n.id]),
+      ];
+
+      try {
+        for (let i = 0; i < deletions.length; i += 400) {
+          const chunk = deletions.slice(i, i + 400);
+          const batch = writeBatch(db);
+          chunk.forEach((segments) => {
+            batch.delete(doc(db, ...segments));
+          });
+          await batch.commit();
+        }
+
+        const resetBatch = writeBatch(db);
+        resetBatch.set(
+          doc(db, 'users', uid, 'profile', 'master'),
+          stripUndefinedForFirestore(emptyWorkspace.profile)
+        );
+        resetBatch.set(
+          doc(db, 'users', uid, 'workspace', 'stickyNotesMeta'),
+          stripUndefinedForFirestore({
+            categories: DEFAULT_STICKY_CATEGORIES,
+            seeded: true,
+            updatedAt: new Date().toISOString(),
+          })
+        );
+        resetBatch.set(
+          doc(db, 'users', uid, 'workspace', 'preferences'),
+          stripUndefinedForFirestore({
+            activeResumeId: '',
+            activeCoverLetterId: '',
+            activeReviewId: '',
+            reviewScoringConfig: DEFAULT_REVIEW_SCORING_CONFIG,
+            driveExportSettings: DEFAULT_DRIVE_EXPORT_SETTINGS,
+            updatedAt: new Date().toISOString(),
+          })
+        );
+        await resetBatch.commit();
+        setSyncStatus('synced');
+        setSyncError(null);
+      } catch (err) {
+        setSyncStatus('error');
+        setSyncError(err instanceof Error ? err.message : 'Failed to reset cloud workspace.');
+      }
+    } else if (isGuest) {
+      try {
+        localStorage.setItem(GUEST_WORKSPACE_STORAGE_KEY, JSON.stringify(emptyWorkspace));
+      } catch {
+        // Ignore storage errors
+      }
+    }
+
+    setPendingDriveExports([]);
+    setDriveError(null);
+    applyWorkspaceState(emptyWorkspace);
+    setActiveModule('profile');
+  }, [applyWorkspaceState, isGuest, user]);
 
   const clearDriveError = useCallback(() => {
     setDriveError(null);
@@ -1511,7 +1719,7 @@ export function CareerProvider({ children }: { children: React.ReactNode }) {
       overrideDoc?: ResumeDocument | CoverLetterDocument | CompanyResearch;
       overrideLinkedJob?: JobApplication;
     }) => {
-      if (!stateRef.current.driveExportSettings.autoExportEnabled) return;
+      if (!auth.currentUser || !stateRef.current.driveExportSettings.autoExportEnabled) return;
       const title = getDocTitleForQueue(params.kind, params.id, params.overrideDoc);
       const token = getDriveAccessToken();
       if (!token) {
@@ -1839,26 +2047,16 @@ export function CareerProvider({ children }: { children: React.ReactNode }) {
     [stickyCategories, user, writeDocImmediate]
   );
 
-  const resetDemoStickyNotes = useCallback(() => {
+  const clearStickyNotes = useCallback(() => {
     const existingIds = stateRef.current.stickyNotes.map((n) => n.id);
-    const defaultCopy = DEFAULT_STICKY_NOTES.map((n) => ({ ...n }));
     const defaultCats = [...DEFAULT_STICKY_CATEGORIES];
-    setStickyNotes(defaultCopy);
+    setStickyNotes([]);
     setStickyCategories(defaultCats);
 
     if (user) {
       const batch = writeBatch(db);
-      const defaultIdSet = new Set(defaultCopy.map((n) => n.id));
       existingIds.forEach((oldId) => {
-        if (!defaultIdSet.has(oldId)) {
-          batch.delete(doc(db, 'users', user.uid, 'stickyNotes', oldId));
-        }
-      });
-      defaultCopy.forEach((note) => {
-        batch.set(
-          doc(db, 'users', user.uid, 'stickyNotes', note.id),
-          stripUndefinedForFirestore(note)
-        );
+        batch.delete(doc(db, 'users', user.uid, 'stickyNotes', oldId));
       });
       batch.set(
         doc(db, 'users', user.uid, 'workspace', 'stickyNotesMeta'),
@@ -1870,7 +2068,7 @@ export function CareerProvider({ children }: { children: React.ReactNode }) {
       );
       void batch.commit().catch((err) => {
         setSyncStatus('error');
-        setSyncError(err instanceof Error ? err.message : 'Failed to reset demo sticky notes.');
+        setSyncError(err instanceof Error ? err.message : 'Failed to clear sticky notes.');
         try {
           handleFirestoreError(err, OperationType.WRITE, `users/${user.uid}/stickyNotes`);
         } catch {
@@ -2007,10 +2205,9 @@ export function CareerProvider({ children }: { children: React.ReactNode }) {
   const deleteResume = useCallback(
     (id: string) => {
       setResumes((prev) => {
-        if (prev.length <= 1) return prev;
         const filtered = prev.filter((r) => r.id !== id);
-        if (activeResumeId === id && filtered.length > 0) {
-          setActiveResumeId(filtered[0].id);
+        if (activeResumeId === id) {
+          setActiveResumeId(filtered[0]?.id || '');
         }
         return filtered;
       });
@@ -2218,10 +2415,9 @@ export function CareerProvider({ children }: { children: React.ReactNode }) {
   const deleteCoverLetter = useCallback(
     (id: string) => {
       setCoverLetters((prev) => {
-        if (prev.length <= 1) return prev;
         const filtered = prev.filter((c) => c.id !== id);
-        if (activeCoverLetterId === id && filtered.length > 0) {
-          setActiveCoverLetterId(filtered[0].id);
+        if (activeCoverLetterId === id) {
+          setActiveCoverLetterId(filtered[0]?.id || '');
         }
         return filtered;
       });
@@ -2232,6 +2428,14 @@ export function CareerProvider({ children }: { children: React.ReactNode }) {
     [activeCoverLetterId, deleteDocImmediate, user]
   );
 
+  const clearTailorLaunchRequest = useCallback(() => {
+    setTailorLaunchRequest(null);
+  }, []);
+
+  const clearCoverLetterLaunchRequest = useCallback(() => {
+    setCoverLetterLaunchRequest(null);
+  }, []);
+
   const openTailoredResumeForJob = useCallback(
     (jobId: string): ResumeDocument | undefined => {
       const job = jobs.find((j) => j.id === jobId);
@@ -2240,10 +2444,16 @@ export function CareerProvider({ children }: { children: React.ReactNode }) {
       if (!master) return undefined;
       const tailoredName = buildTailoredJobLabel(job);
       const created = duplicateResume(master.id, tailoredName, job.id);
+      const hasResearch = companyResearches.some(
+        (r) => r.jobApplicationId === job.id && r.status === 'completed'
+      );
+      if (created && (job.jobDescription.trim() || hasResearch)) {
+        setTailorLaunchRequest({ resumeId: created.id, jobId: job.id });
+      }
       setActiveModule('resumes');
       return created;
     },
-    [duplicateResume, jobs, resumes]
+    [companyResearches, duplicateResume, jobs, resumes]
   );
 
   const openCoverLetterForJob = useCallback(
@@ -2258,10 +2468,16 @@ export function CareerProvider({ children }: { children: React.ReactNode }) {
         linkedResumeId: resumeId || resumes.find((r) => r.linkedJobId === job.id)?.id || resumes[0]?.id,
         prefillFromProfile: true,
       });
+      const hasResearch = companyResearches.some(
+        (r) => r.jobApplicationId === job.id && r.status === 'completed'
+      );
+      if (job.jobDescription.trim() || hasResearch) {
+        setCoverLetterLaunchRequest({ coverLetterId: created.id, jobId: job.id });
+      }
       setActiveModule('cover-letters');
       return created;
     },
-    [coverLetters, createCoverLetter, jobs, resumes]
+    [companyResearches, coverLetters, createCoverLetter, jobs, resumes]
   );
 
   // In-app 30-second task checker for queued Jobs notes (runs strictly one task at a time)
@@ -2296,6 +2512,7 @@ export function CareerProvider({ children }: { children: React.ReactNode }) {
       const proposal = await assistResumeWithAi({
         action: 'tailor_to_job',
         resume: baseDraft,
+        careerProfile: snapshot.profile,
         targetJob: job,
         companyResearch,
         jobMatch,
@@ -2600,10 +2817,37 @@ export function CareerProvider({ children }: { children: React.ReactNode }) {
       setJobs((prev) =>
         prev.map((j) => {
           if (j.id !== jobId) return j;
+          const currentCompany = (j.company || '').trim();
+          const candidateCompanyName = companyProfile.companyName.trim();
+          const hasGroundedCompanyName =
+            Boolean(candidateCompanyName) &&
+            !isPlaceholderOrAggregatorName(candidateCompanyName);
+          const shouldFillCompany =
+            (!currentCompany || isPlaceholderOrAggregatorName(currentCompany)) &&
+            hasGroundedCompanyName &&
+            (research.autofilledFields ? Boolean(research.autofilledFields.company) : true);
+          const existingWebsite = (j.companyWebsite || '').trim();
+          const existingIsAggregator = Boolean(
+            existingWebsite && isJobBoardOrAggregatorUrl(existingWebsite)
+          );
+          const safeOfficialWebsite =
+            companyProfile.officialWebsite &&
+            !isJobBoardOrAggregatorUrl(companyProfile.officialWebsite)
+              ? companyProfile.officialWebsite.trim().slice(0, 2048)
+              : '';
+          const shouldFillWebsite =
+            (!existingWebsite || existingIsAggregator) && Boolean(safeOfficialWebsite);
           const updatedJob: JobApplication = {
             ...j,
+            company: shouldFillCompany
+              ? companyProfile.companyName.trim().slice(0, 200)
+              : j.company,
             companyId: companyProfile.id,
-            companyWebsite: j.companyWebsite || companyProfile.officialWebsite || '',
+            companyWebsite: shouldFillWebsite
+              ? safeOfficialWebsite
+              : existingIsAggregator
+              ? ''
+              : existingWebsite,
             updatedAt: new Date().toISOString(),
           };
           if (user) {
@@ -3138,11 +3382,15 @@ export function CareerProvider({ children }: { children: React.ReactNode }) {
     <CareerContext.Provider
       value={{
         user,
+        isGuest,
         authLoading,
         syncStatus,
         syncError,
         signInWithGoogle,
         signOutUser,
+        enterGuestMode,
+        exitGuestMode,
+        resetWorkspaceData,
         driveConnected,
         driveExportSettings,
         updateDriveExportSettings,
@@ -3170,7 +3418,7 @@ export function CareerProvider({ children }: { children: React.ReactNode }) {
         updateStickyNote,
         deleteStickyNote,
         addStickyCategory,
-        resetDemoStickyNotes,
+        clearStickyNotes,
         isStickyNotesOpen,
         isStickyNotesMinimized,
         openStickyNotes,
@@ -3198,6 +3446,10 @@ export function CareerProvider({ children }: { children: React.ReactNode }) {
         deleteCoverLetter,
         openTailoredResumeForJob,
         openCoverLetterForJob,
+        tailorLaunchRequest,
+        clearTailorLaunchRequest,
+        coverLetterLaunchRequest,
+        clearCoverLetterLaunchRequest,
         selectedJobId,
         setSelectedJobId,
         companies,

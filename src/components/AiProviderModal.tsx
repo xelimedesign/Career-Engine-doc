@@ -2,13 +2,11 @@ import React, { useEffect, useState } from 'react';
 import {
   AlertTriangle,
   CheckCircle2,
-  Cloud,
   Eye,
   EyeOff,
   Loader2,
   RefreshCw,
   Send,
-  Server,
   X,
 } from 'lucide-react';
 import {
@@ -21,12 +19,14 @@ import {
   saveAiProviderConfig,
   subscribeAiProviderConfig,
 } from '../services/aiProviderConfig';
+import { PROVIDERS, getProviderDef } from '../services/aiProviderRegistry';
 import {
   fetchOllamaModels,
   ollamaChatCompletion,
   OllamaClientError,
   OllamaModelInfo,
 } from '../services/ollamaClient';
+import { LocalAiTroubleshootingNotice } from './LocalAiTroubleshootingNotice';
 
 export interface AiProviderModalProps {
   isOpen: boolean;
@@ -35,6 +35,7 @@ export interface AiProviderModalProps {
 
 export function AiProviderModal({ isOpen, onClose }: AiProviderModalProps) {
   const [config, setConfig] = useState<AiProviderConfig>(() => getAiProviderConfig());
+  const [selectedProviderId, setSelectedProviderId] = useState<AiProviderType>(config.provider);
   const [baseUrlInput, setBaseUrlInput] = useState<string>(config.ollamaBaseUrl);
   const [apiKeyInput, setApiKeyInput] = useState<string>(config.ollamaApiKey);
   const [selectedModel, setSelectedModel] = useState<string>(config.ollamaModel);
@@ -55,7 +56,6 @@ export function AiProviderModal({ isOpen, onClose }: AiProviderModalProps) {
     error?: string;
   }>({ checked: false, configured: true });
 
-  // Interactive SSE Streaming Test Prompt
   const [testPrompt, setTestPrompt] = useState('Say hello in one short sentence.');
   const [streamingReply, setStreamingReply] = useState('');
   const [streamingBusy, setStreamingBusy] = useState(false);
@@ -71,6 +71,7 @@ export function AiProviderModal({ isOpen, onClose }: AiProviderModalProps) {
     if (!isOpen) return;
     const latest = getAiProviderConfig();
     setConfig(latest);
+    setSelectedProviderId(latest.provider);
     setBaseUrlInput(latest.ollamaBaseUrl || DEFAULT_OLLAMA_BASE_URL);
     setApiKeyInput(latest.ollamaApiKey || '');
     setSelectedModel(latest.ollamaModel || latest.availableOllamaModels[0] || '');
@@ -117,11 +118,14 @@ export function AiProviderModal({ isOpen, onClose }: AiProviderModalProps) {
 
   if (!isOpen) return null;
 
+  const currentProviderDef = getProviderDef(selectedProviderId);
+  const isOllamaOrCompatible = selectedProviderId !== 'gemini';
+
   const persistCurrentFields = (overrides?: Partial<AiProviderConfig>) => {
     const cleanUrl = normalizeOllamaBaseUrl(baseUrlInput);
     setBaseUrlInput(cleanUrl);
     const saved = saveAiProviderConfig({
-      provider: config.provider,
+      provider: selectedProviderId,
       ollamaBaseUrl: cleanUrl,
       ollamaApiKey: apiKeyInput,
       ollamaModel: selectedModel.trim(),
@@ -132,13 +136,30 @@ export function AiProviderModal({ isOpen, onClose }: AiProviderModalProps) {
     return saved;
   };
 
-  const handleSelectProvider = (provider: AiProviderType) => {
+  const handleProviderSelectChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
+    const newId = e.target.value as AiProviderType;
+    setSelectedProviderId(newId);
+    const def = getProviderDef(newId);
+    if (def.defaultBaseUrl) {
+      setBaseUrlInput(def.defaultBaseUrl);
+    }
+    if (def.defaultModel) {
+      setSelectedModel(def.defaultModel);
+    }
     setTestError(null);
     setTestSuccessMsg(null);
-    persistCurrentFields({ provider });
+    persistCurrentFields({
+      provider: newId,
+      ollamaBaseUrl: def.defaultBaseUrl || baseUrlInput,
+      ollamaModel: def.defaultModel || selectedModel,
+    });
   };
 
   const handleTestConnection = async () => {
+    if (!isOllamaOrCompatible) {
+      setTestSuccessMsg('Gemini cloud provider is managed server-side.');
+      return;
+    }
     const cleanUrl = normalizeOllamaBaseUrl(baseUrlInput);
     setBaseUrlInput(cleanUrl);
     setTesting(true);
@@ -154,13 +175,13 @@ export function AiProviderModal({ isOpen, onClose }: AiProviderModalProps) {
       const nextModel =
         selectedModel && result.models.includes(selectedModel)
           ? selectedModel
-          : result.models[0] || selectedModel || '';
+          : result.models[0] || selectedModel || currentProviderDef.defaultModel;
 
       setSelectedModel(nextModel);
       setModelDetails(result.details);
 
       const saved = saveAiProviderConfig({
-        provider: config.provider,
+        provider: selectedProviderId,
         ollamaBaseUrl: result.baseUrl,
         ollamaApiKey: apiKeyInput,
         ollamaModel: nextModel,
@@ -270,7 +291,7 @@ export function AiProviderModal({ isOpen, onClose }: AiProviderModalProps) {
               AI Model Provider & Connection
             </h2>
             <p className="text-xs text-slate-500 mt-0.5">
-              Choose between cloud Gemini or a local/tunneled Ollama server. Settings persist in browser storage.
+              Choose your AI provider and configure endpoints or API keys.
             </p>
           </div>
           <button
@@ -285,104 +306,68 @@ export function AiProviderModal({ isOpen, onClose }: AiProviderModalProps) {
 
         {/* Body */}
         <div className="flex-1 overflow-y-auto px-6 py-5 space-y-5">
-          {/* Provider Selector */}
+          {/* Single Provider Select Dropdown */}
           <div>
-            <label className="block text-xs font-semibold text-slate-700 mb-2">
-              Model Provider
-            </label>
-            <div
-              role="radiogroup"
-              aria-label="Model Provider"
-              className="grid grid-cols-1 sm:grid-cols-2 gap-2.5"
+            <label
+              htmlFor="provider-select-dropdown"
+              className="block text-xs font-semibold text-slate-700 mb-1.5"
             >
-              <button
-                type="button"
-                role="radio"
-                aria-checked={config.provider === 'gemini'}
-                onClick={() => handleSelectProvider('gemini')}
-                className={`p-3.5 rounded-lg border text-left transition-colors cursor-pointer flex items-start gap-3 ${
-                  config.provider === 'gemini'
-                    ? 'border-slate-900 bg-slate-50 ring-1 ring-slate-900'
-                    : 'border-slate-200 bg-white hover:bg-slate-50'
-                }`}
-              >
-                <Cloud
-                  className={`w-4 h-4 mt-0.5 shrink-0 ${
-                    config.provider === 'gemini' ? 'text-slate-900' : 'text-slate-400'
-                  }`}
-                />
-                <div className="min-w-0">
-                  <div className="text-sm font-semibold text-slate-900">
-                    Gemini (Cloud)
-                  </div>
-                  <div className="text-xs text-slate-500 mt-0.5">
-                    Server-managed {DEFAULT_GEMINI_MODEL} with search grounding.
-                  </div>
-                </div>
-              </button>
-
-              <button
-                type="button"
-                role="radio"
-                aria-checked={config.provider === 'ollama'}
-                onClick={() => handleSelectProvider('ollama')}
-                className={`p-3.5 rounded-lg border text-left transition-colors cursor-pointer flex items-start gap-3 ${
-                  config.provider === 'ollama'
-                    ? 'border-slate-900 bg-slate-50 ring-1 ring-slate-900'
-                    : 'border-slate-200 bg-white hover:bg-slate-50'
-                }`}
-              >
-                <Server
-                  className={`w-4 h-4 mt-0.5 shrink-0 ${
-                    config.provider === 'ollama' ? 'text-slate-900' : 'text-slate-400'
-                  }`}
-                />
-                <div className="min-w-0">
-                  <div className="text-sm font-semibold text-slate-900">
-                    Ollama (Custom / Local)
-                  </div>
-                  <div className="text-xs text-slate-500 mt-0.5">
-                    Localhost or HTTPS Cloudflare Tunnel via /v1/chat/completions.
-                  </div>
-                </div>
-              </button>
-            </div>
+              Model Provider Registry
+            </label>
+            <select
+              id="provider-select-dropdown"
+              value={selectedProviderId}
+              onChange={handleProviderSelectChange}
+              className="w-full h-10 px-3 rounded-lg border border-slate-300 bg-white text-sm font-medium text-slate-900 focus:outline-none focus:border-slate-900 focus:ring-1 focus:ring-slate-900 cursor-pointer"
+            >
+              {PROVIDERS.map((prov) => (
+                <option key={prov.id} value={prov.id}>
+                  {prov.name} — {prov.description}
+                </option>
+              ))}
+            </select>
+            <p className="text-[11.5px] text-slate-500 mt-1">
+              {currentProviderDef.description}
+            </p>
           </div>
 
-          {config.provider === 'gemini' ? (
-            <div className="rounded-lg border border-slate-200 bg-slate-50 p-4 space-y-2">
-              <div className="flex items-center justify-between gap-2">
-                <span className="text-xs font-semibold text-slate-800">
-                  Active Model: {DEFAULT_GEMINI_MODEL}
-                </span>
-                {geminiHealth.checked && (
-                  <span
-                    className={`text-xs font-medium ${
-                      geminiHealth.configured ? 'text-emerald-700' : 'text-amber-700'
-                    }`}
-                  >
-                    {geminiHealth.configured
-                      ? 'Server API key configured'
-                      : geminiHealth.error || 'Server API key missing'}
+          {!isOllamaOrCompatible ? (
+            <div className="space-y-4">
+              <div className="rounded-lg border border-slate-200 bg-slate-50 p-4 space-y-2">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-xs font-semibold text-slate-800">
+                    Active Model: {DEFAULT_GEMINI_MODEL}
                   </span>
-                )}
+                  {geminiHealth.checked && (
+                    <span
+                      className={`text-xs font-medium ${
+                        geminiHealth.configured ? 'text-emerald-700' : 'text-amber-700'
+                      }`}
+                    >
+                      {geminiHealth.configured
+                        ? 'Server API key configured'
+                        : geminiHealth.error || 'Server API key missing'}
+                    </span>
+                  )}
+                </div>
+                <p className="text-xs text-slate-600 leading-relaxed">
+                  All AI actions route securely through the backend Gemini API with full search grounding — recommended for stronger reasoning, richer synthesis, and more reliable detail.
+                </p>
               </div>
-              <p className="text-xs text-slate-600 leading-relaxed">
-                All AI actions (Resume Builder, Cover Letter Maker, Job Analysis, Company Research, Review Center, AI Writing Companion, and Sticky Note tasks) route securely through the backend Gemini API.
-              </p>
+              <LocalAiTroubleshootingNotice compact />
             </div>
           ) : (
             <div className="space-y-4">
               {/* Base URL */}
               <div>
                 <label
-                  htmlFor="ollama-base-url"
+                  htmlFor="provider-base-url"
                   className="block text-xs font-semibold text-slate-700 mb-1.5"
                 >
-                  Ollama Base URL
+                  Provider Base URL
                 </label>
                 <input
-                  id="ollama-base-url"
+                  id="provider-base-url"
                   type="url"
                   value={baseUrlInput}
                   onChange={(e) => setBaseUrlInput(e.target.value)}
@@ -391,25 +376,22 @@ export function AiProviderModal({ isOpen, onClose }: AiProviderModalProps) {
                     setBaseUrlInput(clean);
                     saveAiProviderConfig({ ollamaBaseUrl: clean });
                   }}
-                  placeholder="http://localhost:11434 or https://ollama.yourdomain.com"
+                  placeholder="https://api.openai.com or http://localhost:11434"
                   className="w-full h-10 px-3 rounded-lg border border-slate-300 bg-white text-sm font-mono text-slate-900 placeholder:text-slate-400 focus:outline-none focus:border-slate-900 focus:ring-1 focus:ring-slate-900"
                 />
-                <p className="text-[11.5px] text-slate-500 mt-1">
-                  Trailing slashes are removed automatically. Use an HTTPS Cloudflare Tunnel URL when accessing this app over HTTPS.
-                </p>
               </div>
 
-              {/* Optional API Key / Auth Header */}
+              {/* API Key Input */}
               <div>
                 <label
-                  htmlFor="ollama-api-key"
+                  htmlFor="provider-api-key"
                   className="block text-xs font-semibold text-slate-700 mb-1.5"
                 >
-                  Optional API Key / Auth Header
+                  API Key / Auth Header {currentProviderDef.needsApiKey ? '(Required)' : '(Optional)'}
                 </label>
                 <div className="relative">
                   <input
-                    id="ollama-api-key"
+                    id="provider-api-key"
                     type={showApiKey ? 'text' : 'password'}
                     value={apiKeyInput}
                     onChange={(e) => {
@@ -417,7 +399,11 @@ export function AiProviderModal({ isOpen, onClose }: AiProviderModalProps) {
                       setApiKeyInput(val);
                       saveAiProviderConfig({ ollamaApiKey: val });
                     }}
-                    placeholder="Leave blank for unauthenticated local Ollama"
+                    placeholder={
+                      currentProviderDef.needsApiKey
+                        ? 'Enter API key (or leave blank to use server environment secret)'
+                        : 'Optional API key / Bearer token'
+                    }
                     autoComplete="off"
                     className="w-full h-10 pl-3 pr-10 rounded-lg border border-slate-300 bg-white text-sm font-mono text-slate-900 placeholder:font-sans placeholder:text-slate-400 focus:outline-none focus:border-slate-900 focus:ring-1 focus:ring-slate-900"
                   />
@@ -431,8 +417,7 @@ export function AiProviderModal({ isOpen, onClose }: AiProviderModalProps) {
                   </button>
                 </div>
                 <p className="text-[11.5px] text-slate-500 mt-1">
-                  If provided, requests include{' '}
-                  <code className="font-mono text-slate-700">Authorization: Bearer &lt;key&gt;</code>. Leave blank to omit the header.
+                  Local keys are kept in your browser. Server environment secrets are used as a fallback if blank.
                 </p>
               </div>
 
@@ -452,10 +437,6 @@ export function AiProviderModal({ isOpen, onClose }: AiProviderModalProps) {
                     )}
                     <span>Test Connection & Refresh Models</span>
                   </button>
-
-                  <span className="text-xs text-slate-500 font-mono truncate">
-                    GET {normalizeOllamaBaseUrl(baseUrlInput)}/v1/models (fallback: /api/tags)
-                  </span>
                 </div>
 
                 {testSuccessMsg && (
@@ -485,13 +466,15 @@ export function AiProviderModal({ isOpen, onClose }: AiProviderModalProps) {
                   </div>
                 )}
 
-                {/* Model Input + Discovered Models Dropdown */}
+                <LocalAiTroubleshootingNotice compact />
+
+                {/* Model Input */}
                 <div className="space-y-2">
                   <label
-                    htmlFor="ollama-model-select"
+                    htmlFor="provider-model-input"
                     className="block text-xs font-semibold text-slate-700"
                   >
-                    Installed Ollama Model
+                    Model Name
                   </label>
 
                   {config.availableOllamaModels.length > 0 && (
@@ -508,28 +491,21 @@ export function AiProviderModal({ isOpen, onClose }: AiProviderModalProps) {
                         setSelectedModel(model);
                         saveAiProviderConfig({ ollamaModel: model });
                       }}
-                      className="w-full h-10 px-3 rounded-lg border border-slate-300 bg-white text-sm font-mono text-slate-900 focus:outline-none focus:border-slate-900 focus:ring-1 focus:ring-slate-900"
+                      className="w-full h-10 px-3 rounded-lg border border-slate-300 bg-white text-sm font-mono text-slate-900 focus:outline-none focus:border-slate-900 focus:ring-1 focus:ring-slate-900 cursor-pointer"
                     >
                       <option value="">
-                        Select a discovered model ({config.availableOllamaModels.length}) or type below...
+                        Select discovered model ({config.availableOllamaModels.length}) or type below...
                       </option>
-                      {config.availableOllamaModels.map((modelName) => {
-                        const info = modelDetails.find((d) => d.name === modelName);
-                        const meta = info?.parameterSize
-                          ? ` (${info.parameterSize}${info.quantization ? ` · ${info.quantization}` : ''})`
-                          : '';
-                        return (
-                          <option key={modelName} value={modelName}>
-                            {modelName}
-                            {meta}
-                          </option>
-                        );
-                      })}
+                      {config.availableOllamaModels.map((modelName) => (
+                        <option key={modelName} value={modelName}>
+                          {modelName}
+                        </option>
+                      ))}
                     </select>
                   )}
 
                   <input
-                    id="ollama-model-select"
+                    id="provider-model-input"
                     type="text"
                     value={selectedModel}
                     onChange={(e) => {
@@ -537,12 +513,9 @@ export function AiProviderModal({ isOpen, onClose }: AiProviderModalProps) {
                       setSelectedModel(model);
                       saveAiProviderConfig({ ollamaModel: model });
                     }}
-                    placeholder="Enter model name (e.g. gemma4, llama3.2, gpt-4o)"
+                    placeholder="e.g. gpt-4o-mini, gemma4, llama3.2"
                     className="w-full h-10 px-3 rounded-lg border border-slate-300 bg-white text-sm font-mono text-slate-900 placeholder:font-sans placeholder:text-slate-400 focus:outline-none focus:border-slate-900 focus:ring-1 focus:ring-slate-900"
                   />
-                  <p className="text-[11.5px] text-slate-500">
-                    Type any model name manually at any time, even if model discovery returns empty.
-                  </p>
                 </div>
               </div>
 
@@ -561,7 +534,7 @@ export function AiProviderModal({ isOpen, onClose }: AiProviderModalProps) {
                     type="text"
                     value={testPrompt}
                     onChange={(e) => setTestPrompt(e.target.value)}
-                    placeholder="Send a test prompt to verify real-time token streaming..."
+                    placeholder="Send a test prompt..."
                     className="flex-1 h-9 px-3 rounded-lg border border-slate-300 bg-white text-xs text-slate-900 focus:outline-none focus:border-slate-900"
                   />
                   <button
@@ -581,11 +554,9 @@ export function AiProviderModal({ isOpen, onClose }: AiProviderModalProps) {
                 {(streamingReply || streamingBusy) && (
                   <div className="mt-2.5 rounded-lg border border-slate-200 bg-slate-50 p-3 text-xs text-slate-800 leading-relaxed whitespace-pre-wrap">
                     <div className="flex items-center justify-between text-[11px] text-slate-500 mb-1">
+                      <span>Response from {selectedModel || 'Provider'}</span>
                       <span>
-                        Response from {selectedModel || 'Ollama'}
-                      </span>
-                      <span>
-                        {streamingUsedFallback ? 'Non-streaming fallback' : streamingBusy ? 'Streaming tokens...' : 'SSE stream complete'}
+                        {streamingUsedFallback ? 'Non-streaming fallback' : streamingBusy ? 'Streaming tokens...' : 'SSE complete'}
                       </span>
                     </div>
                     <div>{streamingReply || 'Waiting for first token...'}</div>
@@ -601,9 +572,7 @@ export function AiProviderModal({ isOpen, onClose }: AiProviderModalProps) {
           <span className="text-xs text-slate-500">
             Active:{' '}
             <strong className="font-semibold text-slate-800">
-              {config.provider === 'ollama'
-                ? `Ollama • ${selectedModel.trim() || 'No model'}`
-                : `Gemini • ${DEFAULT_GEMINI_MODEL}`}
+              {currentProviderDef.name} • {selectedModel.trim() || currentProviderDef.defaultModel}
             </strong>
           </span>
           <div className="flex items-center gap-2">

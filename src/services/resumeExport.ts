@@ -22,15 +22,31 @@ import {
   triggerBlobDownload,
 } from './exportHelpers';
 
-function formatDateRange(start: string, end: string, isCurrent?: boolean): string {
-  const s = start.trim();
-  const e = isCurrent ? 'Present' : end.trim();
+function safeTrim(val?: string | null): string {
+  return typeof val === 'string' ? val.trim() : '';
+}
+
+function formatDateRange(start?: string | null, end?: string | null, isCurrent?: boolean): string {
+  const s = safeTrim(start);
+  const e = isCurrent ? 'Present' : safeTrim(end);
   if (s && e) return `${s} – ${e}`;
   return s || e || '';
 }
 
 export async function buildResumeDocxBlob(resume: ResumeDocument): Promise<Blob> {
-  const { formatting, personal, summary, workExperience, education, skills, projects, certifications, awards, volunteer, languages, publications, sections } = resume;
+  const { formatting } = resume;
+  const personal = resume.personal || ({} as ResumeDocument['personal']);
+  const summary = resume.summary || ({} as ResumeDocument['summary']);
+  const workExperience = Array.isArray(resume.workExperience) ? resume.workExperience : [];
+  const education = Array.isArray(resume.education) ? resume.education : [];
+  const skills = resume.skills || { technical: [], software: [], professional: [], industry: [] };
+  const projects = Array.isArray(resume.projects) ? resume.projects : [];
+  const certifications = Array.isArray(resume.certifications) ? resume.certifications : [];
+  const awards = Array.isArray(resume.awards) ? resume.awards : [];
+  const volunteer = Array.isArray(resume.volunteer) ? resume.volunteer : [];
+  const languages = Array.isArray(resume.languages) ? resume.languages : [];
+  const publications = Array.isArray(resume.publications) ? resume.publications : [];
+  const sections = Array.isArray(resume.sections) ? resume.sections : [];
   const font = mapDocxFont(formatting.fontFamily);
   const bodySizeHalfPt = Math.round(formatting.fontSize * 2);
   const headingSizeHalfPt = Math.round(formatting.headingSize * 2);
@@ -62,7 +78,7 @@ export async function buildResumeDocxBlob(resume: ResumeDocument): Promise<Blob>
   );
 
   // Title
-  if (personal.title.trim()) {
+  if (safeTrim(personal.title)) {
     children.push(
       new Paragraph({
         alignment: headerAlign,
@@ -89,25 +105,25 @@ export async function buildResumeDocxBlob(resume: ResumeDocument): Promise<Blob>
     }
   };
 
-  if (personal.location.trim()) {
+  if (safeTrim(personal.location)) {
     contactChildren.push(
       new TextRun({ text: personal.location, font, size: bodySizeHalfPt - 2, color: '44403C' })
     );
   }
-  if (personal.phone.trim()) {
+  if (safeTrim(personal.phone)) {
     pushSep();
     contactChildren.push(
       new TextRun({ text: personal.phone, font, size: bodySizeHalfPt - 2, color: '44403C' })
     );
   }
-  if (personal.email.trim()) {
+  if (safeTrim(personal.email)) {
     pushSep();
     contactChildren.push(
       new ExternalHyperlink({
-        link: `mailto:${personal.email.trim()}`,
+        link: `mailto:${safeTrim(personal.email)}`,
         children: [
           new TextRun({
-            text: personal.email.trim(),
+            text: safeTrim(personal.email),
             font,
             size: bodySizeHalfPt - 2,
             color: accentHex,
@@ -117,14 +133,14 @@ export async function buildResumeDocxBlob(resume: ResumeDocument): Promise<Blob>
       })
     );
   }
-  if (personal.linkedin.trim()) {
+  if (safeTrim(personal.linkedin)) {
     pushSep();
     contactChildren.push(
       new ExternalHyperlink({
         link: normalizeUrl(personal.linkedin),
         children: [
           new TextRun({
-            text: personal.linkedin.trim(),
+            text: safeTrim(personal.linkedin),
             font,
             size: bodySizeHalfPt - 2,
             color: accentHex,
@@ -134,14 +150,14 @@ export async function buildResumeDocxBlob(resume: ResumeDocument): Promise<Blob>
       })
     );
   }
-  if (personal.portfolio.trim()) {
+  if (safeTrim(personal.portfolio)) {
     pushSep();
     contactChildren.push(
       new ExternalHyperlink({
         link: normalizeUrl(personal.portfolio),
         children: [
           new TextRun({
-            text: personal.portfolio.trim(),
+            text: safeTrim(personal.portfolio),
             font,
             size: bodySizeHalfPt - 2,
             color: accentHex,
@@ -151,14 +167,14 @@ export async function buildResumeDocxBlob(resume: ResumeDocument): Promise<Blob>
       })
     );
   }
-  if (personal.website.trim()) {
+  if (safeTrim(personal.website)) {
     pushSep();
     contactChildren.push(
       new ExternalHyperlink({
         link: normalizeUrl(personal.website),
         children: [
           new TextRun({
-            text: personal.website.trim(),
+            text: safeTrim(personal.website),
             font,
             size: bodySizeHalfPt - 2,
             color: accentHex,
@@ -207,11 +223,11 @@ export async function buildResumeDocxBlob(resume: ResumeDocument): Promise<Blob>
   const renderSection = (key: ResumeSectionKey) => {
     switch (key) {
       case 'summary': {
-        if (!summary.headline.trim() && !summary.summary.trim() && !summary.careerObjectives.trim()) {
+        if (!safeTrim(summary.headline) && !safeTrim(summary.summary) && !safeTrim(summary.careerObjectives)) {
           return;
         }
         addSectionHeader('Professional Summary');
-        if (summary.headline.trim()) {
+        if (safeTrim(summary.headline)) {
           children.push(
             new Paragraph({
               spacing: { after: 60, line: lineSpacing },
@@ -227,7 +243,7 @@ export async function buildResumeDocxBlob(resume: ResumeDocument): Promise<Blob>
             })
           );
         }
-        if (summary.summary.trim()) {
+        if (safeTrim(summary.summary)) {
           children.push(
             new Paragraph({
               spacing: { after: 60, line: lineSpacing },
@@ -237,7 +253,7 @@ export async function buildResumeDocxBlob(resume: ResumeDocument): Promise<Blob>
             })
           );
         }
-        if (summary.careerObjectives.trim()) {
+        if (safeTrim(summary.careerObjectives)) {
           children.push(
             new Paragraph({
               spacing: { after: 80, line: lineSpacing },
@@ -309,8 +325,9 @@ export async function buildResumeDocxBlob(resume: ResumeDocument): Promise<Blob>
             );
           }
 
-          exp.responsibilities
-            .filter((r) => r.trim())
+          (exp.responsibilities || [])
+            .map(safeTrim)
+            .filter(Boolean)
             .forEach((resp) => {
               children.push(
                 new Paragraph({
@@ -323,8 +340,9 @@ export async function buildResumeDocxBlob(resume: ResumeDocument): Promise<Blob>
               );
             });
 
-          exp.achievements
-            .filter((a) => a.trim())
+          (exp.achievements || [])
+            .map(safeTrim)
+            .filter(Boolean)
             .forEach((ach) => {
               children.push(
                 new Paragraph({
@@ -337,7 +355,7 @@ export async function buildResumeDocxBlob(resume: ResumeDocument): Promise<Blob>
               );
             });
 
-          if (exp.technologies.length > 0) {
+          if (exp.technologies && exp.technologies.length > 0) {
             children.push(
               new Paragraph({
                 spacing: { after: 60 },
@@ -406,7 +424,7 @@ export async function buildResumeDocxBlob(resume: ResumeDocument): Promise<Blob>
               })
             );
           }
-          if (edu.details.trim()) {
+          if (safeTrim(edu.details)) {
             children.push(
               new Paragraph({
                 spacing: { after: 60, line: lineSpacing },
@@ -486,7 +504,7 @@ export async function buildResumeDocxBlob(resume: ResumeDocument): Promise<Blob>
               ],
             })
           );
-          if (proj.url.trim()) {
+          if (safeTrim(proj.url)) {
             children.push(
               new Paragraph({
                 spacing: { after: 30 },
@@ -495,7 +513,7 @@ export async function buildResumeDocxBlob(resume: ResumeDocument): Promise<Blob>
                     link: normalizeUrl(proj.url),
                     children: [
                       new TextRun({
-                        text: proj.url.trim(),
+                        text: safeTrim(proj.url),
                         font,
                         size: bodySizeHalfPt - 2,
                         color: accentHex,
@@ -507,7 +525,7 @@ export async function buildResumeDocxBlob(resume: ResumeDocument): Promise<Blob>
               })
             );
           }
-          if (proj.description.trim()) {
+          if (safeTrim(proj.description)) {
             children.push(
               new Paragraph({
                 spacing: { after: 35, line: lineSpacing },
@@ -517,7 +535,7 @@ export async function buildResumeDocxBlob(resume: ResumeDocument): Promise<Blob>
               })
             );
           }
-          if (proj.technologies.length > 0) {
+          if (proj.technologies && proj.technologies.length > 0) {
             children.push(
               new Paragraph({
                 spacing: { after: 55 },
@@ -561,7 +579,7 @@ export async function buildResumeDocxBlob(resume: ResumeDocument): Promise<Blob>
               ],
             })
           );
-          if (cert.url.trim()) {
+          if (safeTrim(cert.url)) {
             children.push(
               new Paragraph({
                 spacing: { after: 40 },
@@ -570,7 +588,7 @@ export async function buildResumeDocxBlob(resume: ResumeDocument): Promise<Blob>
                     link: normalizeUrl(cert.url),
                     children: [
                       new TextRun({
-                        text: cert.url.trim(),
+                        text: safeTrim(cert.url),
                         font,
                         size: bodySizeHalfPt - 2,
                         color: accentHex,
@@ -608,7 +626,7 @@ export async function buildResumeDocxBlob(resume: ResumeDocument): Promise<Blob>
               ],
             })
           );
-          if (aw.description.trim()) {
+          if (safeTrim(aw.description)) {
             children.push(
               new Paragraph({
                 spacing: { after: 50, line: lineSpacing },
@@ -646,7 +664,7 @@ export async function buildResumeDocxBlob(resume: ResumeDocument): Promise<Blob>
               ],
             })
           );
-          if (vol.description.trim()) {
+          if (safeTrim(vol.description)) {
             children.push(
               new Paragraph({
                 spacing: { after: 55, line: lineSpacing },
@@ -699,7 +717,7 @@ export async function buildResumeDocxBlob(resume: ResumeDocument): Promise<Blob>
               ],
             })
           );
-          if (pub.url.trim()) {
+          if (safeTrim(pub.url)) {
             children.push(
               new Paragraph({
                 spacing: { after: 25 },
@@ -708,7 +726,7 @@ export async function buildResumeDocxBlob(resume: ResumeDocument): Promise<Blob>
                     link: normalizeUrl(pub.url),
                     children: [
                       new TextRun({
-                        text: pub.url.trim(),
+                        text: safeTrim(pub.url),
                         font,
                         size: bodySizeHalfPt - 2,
                         color: accentHex,
@@ -720,7 +738,7 @@ export async function buildResumeDocxBlob(resume: ResumeDocument): Promise<Blob>
               })
             );
           }
-          if (pub.summary.trim()) {
+          if (safeTrim(pub.summary)) {
             children.push(
               new Paragraph({
                 spacing: { after: 55, line: lineSpacing },
@@ -767,7 +785,19 @@ export async function exportResumeToDocx(resume: ResumeDocument): Promise<void> 
 }
 
 function buildResumePdfDocument(resume: ResumeDocument): jsPDF {
-  const { formatting, personal, summary, workExperience, education, skills, projects, certifications, awards, volunteer, languages, publications, sections } = resume;
+  const { formatting } = resume;
+  const personal = resume.personal || ({} as ResumeDocument['personal']);
+  const summary = resume.summary || ({} as ResumeDocument['summary']);
+  const workExperience = Array.isArray(resume.workExperience) ? resume.workExperience : [];
+  const education = Array.isArray(resume.education) ? resume.education : [];
+  const skills = resume.skills || { technical: [], software: [], professional: [], industry: [] };
+  const projects = Array.isArray(resume.projects) ? resume.projects : [];
+  const certifications = Array.isArray(resume.certifications) ? resume.certifications : [];
+  const awards = Array.isArray(resume.awards) ? resume.awards : [];
+  const volunteer = Array.isArray(resume.volunteer) ? resume.volunteer : [];
+  const languages = Array.isArray(resume.languages) ? resume.languages : [];
+  const publications = Array.isArray(resume.publications) ? resume.publications : [];
+  const sections = Array.isArray(resume.sections) ? resume.sections : [];
   const doc = new jsPDF({ unit: 'pt', format: 'letter' });
   const pageWidth = 612;
   const pageHeight = 792;
@@ -822,7 +852,7 @@ function buildResumePdfDocument(resume: ResumeDocument): jsPDF {
   }
   y += namePt * 1.15;
 
-  if (personal.title.trim()) {
+  if (safeTrim(personal.title)) {
     doc.setFont(pdfFont, 'normal');
     doc.setFontSize(bodyPt + 1);
     doc.setTextColor(87, 83, 78);
@@ -842,7 +872,7 @@ function buildResumePdfDocument(resume: ResumeDocument): jsPDF {
     personal.portfolio,
     personal.website,
   ]
-    .map((v) => v.trim())
+    .map(safeTrim)
     .filter(Boolean);
 
   if (contactItems.length > 0) {
@@ -947,9 +977,9 @@ function buildResumePdfDocument(resume: ResumeDocument): jsPDF {
           if (sub) {
             drawWrappedText(sub, margin, maxWidth, bodyPt - 1, 'normal', [87, 83, 78]);
           }
-          exp.responsibilities.forEach(drawBullet);
-          exp.achievements.forEach(drawBullet);
-          if (exp.technologies.length > 0) {
+          (exp.responsibilities || []).forEach(drawBullet);
+          (exp.achievements || []).forEach(drawBullet);
+          if (Array.isArray(exp.technologies) && exp.technologies.length > 0) {
             drawWrappedText(
               `Technologies: ${exp.technologies.join(', ')}`,
               margin,
@@ -980,11 +1010,11 @@ function buildResumePdfDocument(resume: ResumeDocument): jsPDF {
 
       case 'skills': {
         const groups = [
-          { label: 'Technical Skills', items: skills.technical },
-          { label: 'Software & Tools', items: skills.software },
-          { label: 'Professional Skills', items: skills.professional },
-          { label: 'Industry Knowledge', items: skills.industry },
-        ].filter((g) => g.items.length > 0);
+          { label: 'Technical Skills', items: skills?.technical || [] },
+          { label: 'Software & Tools', items: skills?.software || [] },
+          { label: 'Professional Skills', items: skills?.professional || [] },
+          { label: 'Industry Knowledge', items: skills?.industry || [] },
+        ].filter((g) => Array.isArray(g.items) && g.items.length > 0);
         if (groups.length === 0) return;
         drawSectionHeading('Skills');
         groups.forEach((g) => {
@@ -998,12 +1028,12 @@ function buildResumePdfDocument(resume: ResumeDocument): jsPDF {
         drawSectionHeading('Projects');
         projects.forEach((p) => {
           drawTitleWithRightDate(
-            p.name + (p.role ? ` — ${p.role}` : ''),
-            formatDateRange(p.startDate, p.endDate)
+            p.name + ((p as any).role ? ` — ${(p as any).role}` : ''),
+            formatDateRange((p as any).startDate, (p as any).endDate)
           );
           if (p.url) drawWrappedText(p.url, margin, maxWidth, bodyPt - 1.5, 'normal', [ar, ag, ab]);
           if (p.description) drawWrappedText(p.description, margin, maxWidth, bodyPt, 'normal', [41, 37, 36]);
-          if (p.technologies.length > 0) {
+          if (Array.isArray(p.technologies) && p.technologies.length > 0) {
             drawWrappedText(`Stack: ${p.technologies.join(', ')}`, margin, maxWidth, bodyPt - 1.5, 'normal', [87, 83, 78]);
           }
           y += 4;

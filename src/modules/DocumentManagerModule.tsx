@@ -26,6 +26,7 @@ import {
   triggerBlobDownload,
 } from '../services/exportHelpers';
 import { CompanyResearch, DriveExportFormat } from '../types/career';
+import { toSafeHttpUrl } from '../utils/urlSafety';
 
 function downloadCompanyReportText(research: CompanyResearch) {
   const blob = buildCompanyReportTextBlob(research);
@@ -271,9 +272,9 @@ export function DocumentManagerModule() {
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
-            {driveExportSettings.folderWebViewLink && (
+            {toSafeHttpUrl(driveExportSettings.folderWebViewLink) && (
               <a
-                href={driveExportSettings.folderWebViewLink}
+                href={toSafeHttpUrl(driveExportSettings.folderWebViewLink)}
                 target="_blank"
                 rel="noopener noreferrer"
                 className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-slate-700 bg-slate-50 border border-slate-200 hover:bg-slate-100 rounded-md"
@@ -557,9 +558,9 @@ export function DocumentManagerModule() {
                             · Review {latestReview.scores.overallScore}/100
                           </span>
                         )}
-                        {item.driveSyncStatus === 'synced' && item.driveWebViewLink && (
+                        {item.driveSyncStatus === 'synced' && toSafeHttpUrl(item.driveWebViewLink) && (
                           <a
-                            href={item.driveWebViewLink}
+                            href={toSafeHttpUrl(item.driveWebViewLink)}
                             target="_blank"
                             rel="noopener noreferrer"
                             title={
@@ -706,18 +707,13 @@ export function DocumentManagerModule() {
                             </button>
                             <button
                               type="button"
-                              disabled={
-                                item.kind === 'resume'
-                                  ? resumes.length <= 1
-                                  : coverLetters.length <= 1
-                              }
                               onClick={() =>
                                 item.kind === 'resume'
                                   ? deleteResume(item.id)
                                   : deleteCoverLetter(item.id)
                               }
                               title="Delete"
-                              className="p-1.5 text-slate-400 hover:text-rose-600 disabled:opacity-30 cursor-pointer"
+                              className="p-1.5 text-slate-400 hover:text-rose-600 cursor-pointer"
                             >
                               <Trash2 className="w-3.5 h-3.5" />
                             </button>
@@ -730,8 +726,52 @@ export function DocumentManagerModule() {
               })}
               {items.length === 0 && (
                 <tr>
-                  <td colSpan={6} className="py-10 text-center text-slate-500">
-                    No documents match your filter.
+                  <td colSpan={6} className="py-12 px-4 text-center text-slate-500 space-y-3">
+                    {resumes.length === 0 && coverLetters.length === 0 && completedResearches.length === 0 ? (
+                      <div className="space-y-3">
+                        <div className="space-y-1">
+                          <div className="text-xs font-semibold text-slate-900">
+                            Your document workspace is empty
+                          </div>
+                          <p className="text-xs text-slate-500 max-w-md mx-auto">
+                            Create a resume or cover letter, or run Company Research on a tracked job to populate your document library.
+                          </p>
+                        </div>
+                        <div className="flex flex-wrap items-center justify-center gap-2">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              createResume({ fromProfile: true });
+                              setActiveModule('resumes');
+                            }}
+                            className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-slate-800 bg-white border border-slate-300 hover:bg-slate-50 rounded-md cursor-pointer"
+                          >
+                            <Plus className="w-3.5 h-3.5" />
+                            New Resume
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              createCoverLetter({ prefillFromProfile: true });
+                              setActiveModule('cover-letters');
+                            }}
+                            className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-white bg-slate-900 hover:bg-slate-800 rounded-md cursor-pointer"
+                          >
+                            <Plus className="w-3.5 h-3.5" />
+                            New Cover Letter
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setActiveModule('jobs')}
+                            className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-slate-700 hover:text-slate-900 cursor-pointer"
+                          >
+                            Go to Jobs
+                          </button>
+                        </div>
+                      </div>
+                    ) : (
+                      <span>No documents match your filter.</span>
+                    )}
                   </td>
                 </tr>
               )}

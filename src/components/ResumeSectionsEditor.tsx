@@ -161,21 +161,22 @@ function StringListEditor({
 
 function TagInputList({
   label,
-  items,
+  items = [],
   placeholder,
   onChange,
   companionTrigger,
 }: {
   label: string;
-  items: string[];
+  items?: string[];
   placeholder: string;
   onChange: (next: string[]) => void;
   companionTrigger?: React.ReactNode;
 }) {
   const [draft, setDraft] = useState('');
+  const safeItems = items || [];
 
   const commit = () => {
-    const seen = new Set(items.map((x) => x.trim().toLowerCase()));
+    const seen = new Set(safeItems.map((x) => x.trim().toLowerCase()));
     const parts: string[] = [];
     for (const raw of draft.split(',')) {
       const cleaned = raw.trim();
@@ -186,7 +187,7 @@ function TagInputList({
       }
     }
     if (parts.length > 0) {
-      onChange([...items, ...parts]);
+      onChange([...safeItems, ...parts]);
     }
     setDraft('');
   };
@@ -219,9 +220,9 @@ function TagInputList({
           Add
         </button>
       </div>
-      {items.length > 0 && (
+      {safeItems.length > 0 && (
         <div className="flex flex-wrap gap-1.5 pt-1">
-          {items.map((item, idx) => (
+          {safeItems.map((item, idx) => (
             <span
               key={`${item}-${idx}`}
               className="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs bg-slate-100 text-slate-800 rounded border border-slate-200"
@@ -229,7 +230,7 @@ function TagInputList({
               <span>{item}</span>
               <button
                 type="button"
-                onClick={() => onChange(items.filter((_, i) => i !== idx))}
+                onClick={() => onChange(safeItems.filter((_, i) => i !== idx))}
                 aria-label={`Remove ${item}`}
                 className="text-slate-400 hover:text-rose-600 cursor-pointer"
               >
@@ -275,14 +276,16 @@ function parseCommaOrLineSkills(text: string): string[] {
 
 function formatWorkExpForCompanion(exp: WorkExperienceItem): string {
   const lines: string[] = [];
-  if (exp.responsibilities.length > 0) {
+  const resps = Array.isArray(exp.responsibilities) ? exp.responsibilities : [];
+  const achs = Array.isArray(exp.achievements) ? exp.achievements : [];
+  if (resps.length > 0) {
     lines.push('Responsibilities:');
-    exp.responsibilities.forEach((r) => lines.push(`- ${r}`));
+    resps.forEach((r) => lines.push(`- ${r}`));
   }
-  if (exp.achievements.length > 0) {
+  if (achs.length > 0) {
     if (lines.length > 0) lines.push('');
     lines.push('Achievements:');
-    exp.achievements.forEach((a) => lines.push(`- ${a}`));
+    achs.forEach((a) => lines.push(`- ${a}`));
   }
   return lines.join('\n');
 }
@@ -293,16 +296,18 @@ function parseWorkExpFromCompanion(
 ): { responsibilities: string[]; achievements: string[] } {
   const respMatch = text.match(/Responsibilities:\s*([\s\S]*?)(?=\n\s*Achievements:|$)/i);
   const achMatch = text.match(/Achievements:\s*([\s\S]*)$/i);
+  const fallbackResp = Array.isArray(fallback.responsibilities) ? fallback.responsibilities : [];
+  const fallbackAch = Array.isArray(fallback.achievements) ? fallback.achievements : [];
   if (respMatch || achMatch) {
     return {
-      responsibilities: respMatch ? parseLinesToBullets(respMatch[1]) : fallback.responsibilities,
-      achievements: achMatch ? parseLinesToBullets(achMatch[1]) : fallback.achievements,
+      responsibilities: respMatch ? parseLinesToBullets(respMatch[1]) : fallbackResp,
+      achievements: achMatch ? parseLinesToBullets(achMatch[1]) : fallbackAch,
     };
   }
   const bullets = parseLinesToBullets(text);
   return {
-    responsibilities: bullets.length > 0 ? bullets : fallback.responsibilities,
-    achievements: fallback.achievements,
+    responsibilities: bullets.length > 0 ? bullets : fallbackResp,
+    achievements: fallbackAch,
   };
 }
 
@@ -324,12 +329,13 @@ export function ResumeSectionsEditor({
     },
   };
   if (activeSection === 'personal') {
-    const p = data.personal;
+    const p = data.personal || ({} as PersonalInfo);
     const setField = (k: keyof PersonalInfo, v: string) =>
       onChange((prev) => ({ ...prev, personal: { ...prev.personal, [k]: v } }));
-    const missingName = !p.fullName.trim();
+    const missingName = !(p.fullName || '').trim();
+    const emailTrimmed = (p.email || '').trim();
     const invalidEmail =
-      p.email.trim().length > 0 && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(p.email.trim());
+      emailTrimmed.length > 0 && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailTrimmed);
 
     return (
       <div className="space-y-4">
@@ -351,7 +357,7 @@ export function ResumeSectionsEditor({
               aria-invalid={missingName}
               value={p.fullName}
               onChange={(e) => setField('fullName', e.target.value)}
-              placeholder="Oliver Rowland"
+              placeholder="Your Full Name"
               className={`${INPUT_CLS} ${missingName ? 'border-amber-400 focus:border-amber-600' : ''}`}
             />
             {missingName && (
@@ -366,7 +372,7 @@ export function ResumeSectionsEditor({
               type="text"
               value={p.title}
               onChange={(e) => setField('title', e.target.value)}
-              placeholder="Full Stack Developer"
+              placeholder="Target Role or Title"
               className={INPUT_CLS}
             />
           </div>
@@ -392,7 +398,7 @@ export function ResumeSectionsEditor({
               type="text"
               value={p.phone}
               onChange={(e) => setField('phone', e.target.value)}
-              placeholder="(555) 123-4567"
+              placeholder="(555) 000-0000"
               className={INPUT_CLS}
             />
           </div>
@@ -402,7 +408,7 @@ export function ResumeSectionsEditor({
               type="text"
               value={p.location}
               onChange={(e) => setField('location', e.target.value)}
-              placeholder="Houston, Texas"
+              placeholder="City, State"
               className={INPUT_CLS}
             />
           </div>
@@ -678,7 +684,7 @@ export function ResumeSectionsEditor({
                     type="text"
                     value={exp.position}
                     onChange={(e) => updateExp(exp.id, { position: e.target.value })}
-                    placeholder="Senior Full Stack Developer"
+                    placeholder="Role Title"
                     className={INPUT_CLS}
                   />
                 </div>
@@ -688,7 +694,7 @@ export function ResumeSectionsEditor({
                     type="text"
                     value={exp.company}
                     onChange={(e) => updateExp(exp.id, { company: e.target.value })}
-                    placeholder="Northstack"
+                    placeholder="Company Name"
                     className={INPUT_CLS}
                   />
                 </div>
@@ -698,7 +704,7 @@ export function ResumeSectionsEditor({
                     type="text"
                     value={exp.location}
                     onChange={(e) => updateExp(exp.id, { location: e.target.value })}
-                    placeholder="Houston, TX"
+                    placeholder="City, State (or Remote)"
                     className={INPUT_CLS}
                   />
                 </div>
@@ -909,7 +915,7 @@ export function ResumeSectionsEditor({
                   type="text"
                   value={edu.institution}
                   onChange={(e) => updateEdu(edu.id, { institution: e.target.value })}
-                  placeholder="University of Houston"
+                  placeholder="University or Institution"
                   className={INPUT_CLS}
                 />
               </div>
@@ -919,7 +925,7 @@ export function ResumeSectionsEditor({
                   type="text"
                   value={edu.degree}
                   onChange={(e) => updateEdu(edu.id, { degree: e.target.value })}
-                  placeholder="B.S."
+                  placeholder="Degree (e.g. B.S.)"
                   className={INPUT_CLS}
                 />
               </div>
@@ -929,7 +935,7 @@ export function ResumeSectionsEditor({
                   type="text"
                   value={edu.fieldOfStudy}
                   onChange={(e) => updateEdu(edu.id, { fieldOfStudy: e.target.value })}
-                  placeholder="Computer Science"
+                  placeholder="Field of Study"
                   className={INPUT_CLS}
                 />
               </div>

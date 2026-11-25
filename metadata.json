@@ -1,5 +1,5 @@
 {
-  "name": "Career Engine",
+  "name": "Career Doc",
   "description": "Integrated career workspace featuring Career Profile, Job Tracker & Analyzer, AI Resume Builder, and Cover Letter Maker with live multi-page preview and editable DOCX/PDF export.",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]

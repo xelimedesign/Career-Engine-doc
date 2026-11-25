@@ -43,7 +43,8 @@ service cloud.firestore {
       data.education is list && data.education.size() <= 30 &&
       data.skills is map &&
       data.projects is list && data.projects.size() <= 60 &&
-      data.updatedAt is string && data.updatedAt.size() > 0 && data.updatedAt.size() <= 64;
+      data.updatedAt is string && data.updatedAt.size() > 0 && data.updatedAt.size() <= 64 &&
+      (!('lastImportedAt' in data) || (data.lastImportedAt is string && data.lastImportedAt.size() <= 64));
     }
 
     function isValidJob(data, jobId) {

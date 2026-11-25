@@ -46,6 +46,7 @@ import {
   calculateWeightedApplicationScore,
   DEFAULT_REVIEW_SCORING_CONFIG,
 } from './reviewScoring';
+import { isJobBoardOrAggregatorUrl, isPlaceholderOrAggregatorName } from '../utils/companyResolver';
 
 const STRICT_GROUNDING_RULE = `
 CRITICAL FACTUAL INTEGRITY RULES:
@@ -160,6 +161,7 @@ Return a JSON object with EXACTLY these keys (all arrays of strings):
 export async function ollamaAssistResume(params: {
   action: ResumeAssistAction;
   resume: ResumeDocument;
+  careerProfile?: CareerProfile;
   targetJob?: JobApplication;
   experienceId?: string;
   companyIntelligence?: unknown;
@@ -206,6 +208,7 @@ Return a JSON object with EXACTLY this shape:
       action: params.action,
       experienceId: params.experienceId || null,
       resume: params.resume,
+      careerProfile: params.careerProfile || null,
       targetJob: params.targetJob || null,
       companyIntelligence: params.companyIntelligence || null,
       jobMatch: params.jobMatch || null,
@@ -367,6 +370,12 @@ Return a JSON object with EXACTLY this shape:
 }
 
 export interface OllamaCompanyResearchResponse {
+  companyName: string;
+  website: string | null;
+  headquarters: string | null;
+  overview: string | null;
+  coreFocus: string[];
+  missingInfo: string[];
   officialWebsite: string;
   industry: string;
   services: string[];
@@ -385,10 +394,38 @@ export async function ollamaResearchCompany(params: {
   jobTitle?: string;
   jobDescription?: string;
   jobLocation?: string;
+  sourceUrl?: string;
+  retrievedSnippets?: Array<{
+    title: string;
+    url: string;
+    snippet: string;
+    sourceType?: ResearchSource['sourceType'];
+    isOfficial?: boolean;
+  }>;
+  sources?: Array<{
+    title: string;
+    url: string;
+    sourceType?: ResearchSource['sourceType'];
+    isOfficial?: boolean;
+  }>;
+  searchQueries?: string[];
 }): Promise<OllamaCompanyResearchResponse> {
   const nowIso = new Date().toISOString();
+  const serverSources: ResearchSource[] = (Array.isArray(params.sources) ? params.sources : []).map(
+    (s, idx) => ({
+      id: `src-ol-${idx + 1}-${Date.now().toString(36)}`,
+      title: s.title || s.url,
+      url: s.url,
+      sourceType: s.sourceType || 'third_party',
+      isOfficial: Boolean(s.isOfficial),
+      accessedAt: nowIso,
+    })
+  );
+  const allowedUrlSet = new Set(serverSources.map((s) => s.url));
+  const sourceLookup = new Map(serverSources.map((s) => [s.url, s]));
+
   const fallbackReport: CompanyIntelligenceReport = {
-    companyOverview: `Local Ollama model summary for ${params.companyName}. Live web search grounding is unavailable in local Ollama mode; verify details manually.`,
+    companyOverview: `Summary for ${params.companyName} grounded strictly in retrieved snippets and job posting.`,
     servicesAndSpecialties: 'Requires verification.',
     industry: 'Requires verification.',
     projectsAndPortfolio: 'Requires verification.',
@@ -401,28 +438,67 @@ export async function ollamaResearchCompany(params: {
     sourceConflicts: [],
   };
 
+  const safeProvidedWebsite =
+    params.companyWebsite && !isJobBoardOrAggregatorUrl(params.companyWebsite)
+      ? params.companyWebsite.trim()
+      : '';
+  const officialServerWebsite =
+    serverSources.find((s) => s.isOfficial && !isJobBoardOrAggregatorUrl(s.url))?.url || null;
+
+  const safeInputCompany = !isPlaceholderOrAggregatorName(params.companyName)
+    ? params.companyName.trim()
+    : '';
+
   const fallback = {
-    officialWebsite: params.companyWebsite || '',
+    companyName: safeInputCompany,
+    website: safeProvidedWebsite || officialServerWebsite,
+    headquarters: null as string | null,
+    overview: null as string | null,
+    coreFocus: [] as string[],
+    missingInfo: [
+      ...(safeInputCompany
+        ? []
+        : ['Employer name could not be reliably identified from the provided fields, description, or link.']),
+      'Could not verify employer website or full company profile from the provided link/text.',
+    ],
+    officialWebsite: safeProvidedWebsite || officialServerWebsite || '',
     industry: '',
     services: [] as string[],
     description: '',
-    findings: [] as Array<{ category: string; extractedInfo: string }>,
+    overallConfidence: serverSources.length > 0 ? 'medium' : 'low',
+    findings: [] as Array<{
+      category: string;
+      extractedInfo: string;
+      sourceTitle?: string;
+      sourceUrl?: string;
+      sourceType?: string;
+      confidence?: string;
+    }>,
     report: fallbackReport,
   };
 
-  const parsed = await runOllamaJsonTask({
-    taskLabel: `Company research (${params.companyName})`,
-    systemPrompt: `You are a careful company research assistant running offline/locally without live web search.
-CRITICAL HONESTY RULES:
-1. Never invent URLs, fake citations, or unverified recent news.
-2. Separate clear facts provided in jobDescription/companyWebsite from general knowledge (which must be marked for user verification).
-3. Return ONLY a JSON object with this exact shape:
+  let parsed = fallback;
+  try {
+    parsed = await runOllamaJsonTask({
+      taskLabel: `Company research (${safeInputCompany || 'Employer lookup'})`,
+      systemPrompt: `You are a rigorous Company Intelligence Analyst extracting structured facts strictly from retrievedSnippets and the job posting.
+STRICT ANTI-FABRICATION RULES:
+"Only state facts supported by the provided snippets or job posting. Do not guess or invent a company name, website, headquarters, hiring managers, street addresses, employee counts, or claims. Set unknown fields to null (or "" for companyName if unidentified) and list any unverified or missing items in missingInfo."
+
+Return ONLY a JSON object with this exact shape:
 {
+  "companyName": string,
+  "website": string | null,
+  "headquarters": string | null,
+  "overview": string | null,
+  "coreFocus": string[],
+  "missingInfo": string[],
   "officialWebsite": string,
   "industry": string,
   "services": string[],
   "description": string,
-  "findings": [{ "category": "Company Overview"|"Services & Specialties"|"Industry"|"Technology & Software"|"Mission & Values"|"Careers & Expectations"|"Job Requirements", "extractedInfo": string }],
+  "overallConfidence": "high" | "medium" | "low",
+  "findings": [{ "category": "Company Overview"|"Services & Specialties"|"Industry"|"Projects & Portfolio"|"Technology & Software"|"Mission & Values"|"Recent News & Developments"|"Careers & Expectations"|"Job Requirements", "extractedInfo": string, "sourceTitle": string, "sourceUrl": string, "confidence": "high"|"medium"|"low" }],
   "report": {
     "companyOverview": string,
     "servicesAndSpecialties": string,
@@ -437,9 +513,21 @@ CRITICAL HONESTY RULES:
     "sourceConflicts": string[]
   }
 }`,
-    userPayload: params,
-    fallback,
-  });
+      userPayload: {
+        companyName: safeInputCompany,
+        companyWebsite: params.companyWebsite || '',
+        jobTitle: params.jobTitle || '',
+        jobLocation: params.jobLocation || '',
+        sourceUrl: params.sourceUrl || '',
+        jobDescription: (params.jobDescription || '').slice(0, 6000),
+        retrievedSnippets: params.retrievedSnippets || [],
+        sources: serverSources,
+      },
+      fallback,
+    });
+  } catch {
+    parsed = fallback;
+  }
 
   const VALID_CATS = new Set([
     'Company Overview',
@@ -455,22 +543,32 @@ CRITICAL HONESTY RULES:
 
   const findings: ResearchFinding[] = (Array.isArray(parsed.findings) ? parsed.findings : [])
     .filter((f) => f && typeof f.extractedInfo === 'string' && f.extractedInfo.trim())
-    .map((f, idx) => ({
-      id: `fnd-ol-${idx + 1}-${Date.now().toString(36)}`,
-      category: (VALID_CATS.has(f.category)
-        ? f.category
-        : 'Company Overview') as ResearchFinding['category'],
-      extractedInfo: f.extractedInfo.trim(),
-      sourceTitle: 'Local Ollama Model (Verify Manually)',
-      sourceUrl: '',
-      sourceType: 'third_party',
-      publicationDate: '',
-      dateResearched: nowIso,
-      confidence: 'low',
-      verificationStatus: 'needs_verification',
-      isAiInterpretation: true,
-      conflictNote: '',
-    }));
+    .map((f, idx) => {
+      const candidateUrl = typeof f.sourceUrl === 'string' ? f.sourceUrl.trim() : '';
+      const verifiedUrl = candidateUrl && allowedUrlSet.has(candidateUrl) ? candidateUrl : '';
+      const matched = verifiedUrl ? sourceLookup.get(verifiedUrl) : undefined;
+      const conf: ResearchConfidence = verifiedUrl
+        ? f.confidence === 'high' || f.confidence === 'medium' || f.confidence === 'low'
+          ? f.confidence
+          : 'medium'
+        : 'low';
+      return {
+        id: `fnd-ol-${idx + 1}-${Date.now().toString(36)}`,
+        category: (VALID_CATS.has(f.category)
+          ? f.category
+          : 'Company Overview') as ResearchFinding['category'],
+        extractedInfo: f.extractedInfo.trim(),
+        sourceTitle: matched?.title || (verifiedUrl ? f.sourceTitle || verifiedUrl : 'Job Posting / Snippet Note'),
+        sourceUrl: verifiedUrl,
+        sourceType: matched?.sourceType || 'third_party',
+        publicationDate: '',
+        dateResearched: nowIso,
+        confidence: conf,
+        verificationStatus: 'pending',
+        isAiInterpretation: !verifiedUrl,
+        conflictNote: '',
+      };
+    });
 
   const report: CompanyIntelligenceReport = {
     ...fallbackReport,
@@ -479,15 +577,70 @@ CRITICAL HONESTY RULES:
     sourceConflicts: asStringArray(parsed.report?.sourceConflicts),
   };
 
+  const rawParsedWebsite = typeof parsed.website === 'string' ? parsed.website.trim() : '';
+  const websiteVal =
+    rawParsedWebsite &&
+    /^https?:\/\//i.test(rawParsedWebsite) &&
+    !isJobBoardOrAggregatorUrl(rawParsedWebsite)
+      ? rawParsedWebsite
+      : safeProvidedWebsite || officialServerWebsite;
+
+  const coreFocus = asStringArray(parsed.coreFocus);
+  const services = asStringArray(parsed.services);
+  const missingInfo = asStringArray(parsed.missingInfo);
+  if (!websiteVal && !missingInfo.some((m) => m.toLowerCase().includes('website'))) {
+    missingInfo.push('Official company website was not verified in retrieved snippets.');
+  }
+  if (!parsed.headquarters && !missingInfo.some((m) => m.toLowerCase().includes('headquarters'))) {
+    missingInfo.push('Headquarters location was not verified in retrieved snippets.');
+  }
+
+  const rawParsedName = typeof parsed.companyName === 'string' ? parsed.companyName.trim() : '';
+  const finalOllamaCompany =
+    (!isPlaceholderOrAggregatorName(rawParsedName) ? rawParsedName : '') || safeInputCompany;
+  if (
+    !finalOllamaCompany &&
+    !missingInfo.some((m) => m.toLowerCase().includes('employer name'))
+  ) {
+    missingInfo.unshift(
+      'Employer name could not be reliably identified from the provided fields, description, or link.'
+    );
+  }
+
   return {
-    officialWebsite: parsed.officialWebsite || params.companyWebsite || '',
-    industry: parsed.industry || '',
-    services: asStringArray(parsed.services),
-    description: parsed.description || report.companyOverview,
-    overallConfidence: 'low',
-    searchQueries: [params.companyName],
+    companyName: finalOllamaCompany,
+    website: websiteVal,
+    headquarters:
+      typeof parsed.headquarters === 'string' && parsed.headquarters.trim()
+        ? parsed.headquarters.trim()
+        : null,
+    overview:
+      typeof parsed.overview === 'string' && parsed.overview.trim()
+        ? parsed.overview.trim()
+        : typeof parsed.description === 'string' && parsed.description.trim()
+        ? parsed.description.trim()
+        : null,
+    coreFocus: coreFocus.length > 0 ? coreFocus : services,
+    missingInfo,
+    officialWebsite: websiteVal || '',
+    industry: typeof parsed.industry === 'string' ? parsed.industry : '',
+    services: services.length > 0 ? services : coreFocus,
+    description:
+      (typeof parsed.overview === 'string' && parsed.overview.trim()) ||
+      parsed.description ||
+      report.companyOverview,
+    overallConfidence:
+      serverSources.length === 0
+        ? 'low'
+        : parsed.overallConfidence === 'high' || parsed.overallConfidence === 'medium' || parsed.overallConfidence === 'low'
+        ? parsed.overallConfidence
+        : 'medium',
+    searchQueries:
+      Array.isArray(params.searchQueries) && params.searchQueries.length > 0
+        ? params.searchQueries
+        : [params.companyName],
     findings,
-    sources: [],
+    sources: serverSources,
     report,
     fromCache: false,
   };
